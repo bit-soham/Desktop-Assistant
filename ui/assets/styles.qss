@@ -1,0 +1,18 @@
+QMainWindow {
+    background-color: #f0f0f0;
+}
+
+QMenuBar {
+    background-color: #333;
+    color: white;
+}
+
+QMenuBar::item:selected {
+    background-color: #555;
+}
+
+QStatusBar {
+    background-color: #222;
+    color: white;
+    border-top: 1px solid #555;
+}
