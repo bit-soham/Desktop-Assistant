@@ -70,8 +70,8 @@ preferred_name = "microphone"   # change to a distinctive part of your device na
 selected_index = find_device_index_by_name(p, preferred_name)
 
 # 2) or pick by exact index (uncomment to use):
-selected_index = 2
-speaker_output_index = 2
+selected_index = 1
+speaker_output_index = 3
 # 3) fallback to default input device if not found:
 if selected_index is None:
     selected_index = get_default_input_index(p)
@@ -100,6 +100,24 @@ mic_stream = p.open(format=FORMAT,
 # This forces output to the device at `speaker_output_index`. It validates the device,
 # reads its default sample rate and max output channels, opens the stream, and
 # resamples/duplicates channels when writing.
+def list_output_devices(pa):
+    devices = []
+    for i in range(pa.get_device_count()):
+        info = pa.get_device_info_by_index(i)
+        if int(info.get('maxOutputChannels', 0)) > 0:
+            devices.append({
+                "index": i,
+                "name": info.get('name'),
+                "maxOutputChannels": int(info.get('maxOutputChannels')),
+                "defaultSampleRate": int(info.get('defaultSampleRate', 16000))
+            })
+    return devices
+
+# Example usage
+print("Available OUTPUT devices:")
+for d in list_output_devices(p):
+    print(f"  {d['index']}: {d['name']} (ch:{d['maxOutputChannels']} rate:{d['defaultSampleRate']})")
+
 
 def resample_int16(mono_int16, src_rate, dst_rate):
     if src_rate == dst_rate or mono_int16.size == 0:
