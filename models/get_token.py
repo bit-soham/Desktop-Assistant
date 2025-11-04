@@ -8,11 +8,11 @@ TOKEN_FILE = "token.json"
 
 # Must include cloud-platform for Generative AI access
 SCOPES = [
-    "https://www.googleapis.com/auth/cloud-platform",
-    # "https://www.googleapis.com/auth/generative-language", 
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email"
+  "https://www.googleapis.com/auth/cloud-platform",
+  "openid",
+  "https://www.googleapis.com/auth/userinfo.email",
 ]
+
 
 def create_token():
     if not os.path.exists(CLIENT_SECRETS):

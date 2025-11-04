@@ -26,7 +26,12 @@ except Exception:
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from oauthlib.oauth2.rfc6749.errors import InvalidScopeError
+import os
+import traceback
 # -------------------------
 # Config
 # -------------------------
@@ -50,27 +55,72 @@ TOKEN_FILE = "token.json"
 # Must include cloud-platform for Generative AI access
 OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
-    # "https://www.googleapis.com/auth/generative-language", 
     "openid",
-    "https://www.googleapis.com/auth/userinfo.email"
+    "https://www.googleapis.com/auth/userinfo.email",
 ]
 # -------------------------
 # OAuth helpers
 # -------------------------
+
+
 def get_oauth_creds(client_secrets=CLIENT_SECRETS_FILE, token_file=TOKEN_FILE, scopes=OAUTH_SCOPES):
     """
-    Return valid google.oauth2.credentials.Credentials. Save / refresh token_file accordingly.
-    This will run the installed-app local server flow once if token_file is missing or invalid.
+    Robust loader/refresh for OAuth credentials:
+    - load token.json (without forcing scopes)
+    - try refresh if expired
+    - if refresh fails (invalid_scope or other), delete token and run fresh consent flow
+    - saves valid credentials to token_file and returns them
     """
-    flow = InstalledAppFlow.from_client_secrets_file(client_secrets, scopes)
-    creds = flow.run_local_server(port=0)   # opens browser, ask user to consent
+    creds = None
 
-        # persist creds to token file
-    with open(token_file, "w") as f:
-        f.write(creds.to_json())
-    print(f"[OAuth] saved credentials to {token_file}")
+    # 1) Try loading existing credentials (don't pass scopes here to avoid mismatches)
+    if os.path.exists(token_file):
+        try:
+            creds = Credentials.from_authorized_user_file(token_file)
+            print("[OAuth] Loaded saved credentials from", token_file)
+        except Exception as e:
+            print("[OAuth] Error loading token file:", e)
+            creds = None
+
+    # 2) Attempt refresh if needed
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            print("[OAuth] Credentials expired. Attempting refresh...")
+            creds.refresh(Request())
+            # save refreshed credentials
+            with open(token_file, "w") as f:
+                f.write(creds.to_json())
+            print("[OAuth] Token refreshed and saved.")
+        except Exception as e:
+            # If refresh fails (invalid_scope or other), fall through to force re-login
+            print("[OAuth] Refresh failed:", repr(e))
+            traceback.print_exc()
+            creds = None
+            try:
+                os.remove(token_file)
+                print("[OAuth] Removed stale token file to force fresh consent.")
+            except Exception:
+                pass
+
+    # 3) If no valid creds, run a fresh consent flow and save result
+    if not creds or not creds.valid:
+        print("[OAuth] Starting interactive login flow (will open browser)...")
+        if not os.path.exists(client_secrets):
+            raise RuntimeError(f"Missing client_secrets.json: {client_secrets}")
+        # Force offline access + user consent so we receive a refresh_token
+        flow = InstalledAppFlow.from_client_secrets_file(client_secrets, scopes)
+        creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+        # Persist credentials
+        with open(token_file, "w") as f:
+            f.write(creds.to_json())
+        print(f"[OAuth] Saved new credentials to {token_file}")
+
+    # Final sanity check
+    if not creds or not creds.valid:
+        raise RuntimeError("Failed to obtain valid OAuth credentials.")
 
     return creds
+
 
 # -------------------------
 # Intent few-shot prompt
