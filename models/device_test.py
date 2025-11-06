@@ -1,6 +1,6 @@
 # device_picker_both.py
 import re
-import pyaudio
+import pyaudio # type: ignore
 from collections import OrderedDict
 
 def list_devices_info():

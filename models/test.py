@@ -1,79 +1,63 @@
-import websocket
-import threading
-import time
-import ssl
-import json
-import traceback
-
-def _on_open(self, ws):
-    try:
-        print("[WS] on_open called")
-        self.connected = True
-        # If server needs initial JSON, send it here:
-        # ws.send(json.dumps({"type":"session.start", ...}))
-    except Exception as e:
-        print("[WS] on_open exception:", e)
-        traceback.print_exc()
-
-def _on_error(self, ws, err):
-    # websocket-client sometimes gives Exception or WebSocketException
-    print("[WS] on_error called:", repr(err))
-    # store last error for later inspection
-    self._last_error = err
-    try:
-        traceback.print_exc()
-    except Exception:
-        pass
-
-def _on_close(self, ws, code, reason):
-    print(f"[WS] on_close called: code={code}, reason={reason}")
-    self.connected = False
-    # save last close reason
-    self._last_close = {"code": code, "reason": reason}
-
-def connect(self, timeout=20):
-    websocket.enableTrace(True)
-    print("[WS] connecting to:", self.ws_url)
-    print("[WS] using API key prefix:", (self.api_key or "")[:8] + ("..." if self.api_key else ""))
-
-    # If API requires a subprotocol, include it here. Remove if unknown.
-    subprotocols = ["live"]
-
-    headers = [f"Authorization: Bearer {self.api_key}"]
-
-    # create app
-    self.ws = websocket.WebSocketApp(
-        self.ws_url,
-        header=headers,
-        subprotocols=subprotocols,
-        on_open=self._on_open,
-        on_message=self._on_message,
-        on_error=self._on_error,
-        on_close=self._on_close
-    )
-
-    def _run():
-        try:
-            # sslopt default is fine; increase debug logs from the lib
-            self.ws.run_forever(ping_interval=30)
-        except Exception as e:
-            print("[WS] run_forever exception:", repr(e))
-
-    self.thread = threading.Thread(target=_run, daemon=True)
-    self.thread.start()
-
-    # wait
-    deadline = time.time() + timeout
-    while not getattr(self, "connected", False) and time.time() < deadline:
-        time.sleep(0.05)
-
-    if not getattr(self, "connected", False):
-        alive = getattr(self.thread, "is_alive", lambda: False)()
-        sock = getattr(self.ws, "sock", None)
-        print("[WS] diagnostics -> thread_alive:", alive, "ws.sock:", type(sock).__name__ if sock else None)
-        print("[WS] last_error:", getattr(self, "_last_error", None))
-        print("[WS] last_close:", getattr(self, "_last_close", None))
-        raise RuntimeError("WS connect failed: check websocket trace output and on_error/on_close logs")
-    print("[WS] connected OK")
+# # # list_devices.py
+# # import pyaudio
+# # p = pyaudio.PyAudio()
+# # print("Device count:", p.get_device_count())
+# # for i in range(p.get_device_count()):
+# #     info = p.get_device_info_by_index(i)
+# #     print(f"[{i}] {info['name']!s}  in:{info.get('maxInputChannels',0)}  out:{info.get('maxOutputChannels',0)}  defaultSampleRate:{info.get('defaultSampleRate')}")
+# # p.terminate()
 
 
+# # test_rec_play.py
+# import wave, time
+# import pyaudio
+
+# IDX = None  # set to an integer device index from list_devices.py, or None to use default
+
+# RATE = 16000
+# CHUNK = 1024
+# DUR = 3  # seconds
+# OUT_FILE = "mic_test.wav"
+
+# p = pyaudio.PyAudio()
+# stream = p.open(format=pyaudio.paInt16, channels=1, rate=RATE, input=True,
+#                 input_device_index=IDX, frames_per_buffer=CHUNK)
+# print("Recording for", DUR, "seconds...")
+# frames = []
+# for _ in range(int(RATE/CHUNK * DUR)):
+#     data = stream.read(CHUNK, exception_on_overflow=False)
+#     frames.append(data)
+# stream.stop_stream()
+# stream.close()
+# p.terminate()
+# wf = wave.open(OUT_FILE, "wb")
+# wf.setnchannels(1)
+# wf.setsampwidth(2)
+# wf.setframerate(RATE)
+# wf.writeframes(b"".join(frames))
+# wf.close()
+# print("Saved", OUT_FILE, "-- now playing it back...")
+
+# # play it back
+# p2 = pyaudio.PyAudio()
+# wf = wave.open(OUT_FILE, 'rb')
+# stream = p2.open(format=p2.get_format_from_width(wf.getsampwidth()), channels=wf.getnchannels(), rate=wf.getframerate(), output=True)
+# data = wf.readframes(1024)
+# while data:
+#     stream.write(data)
+#     data = wf.readframes(1024)
+# stream.stop_stream(); stream.close(); p2.terminate()
+# print("Playback done.")
+# import difflib
+# prefix = 'create not'
+# cmd_clean = 'create note'
+# ratio = difflib.SequenceMatcher(None, prefix, cmd_clean).ratio()
+# print(ratio)
+
+import requests, time
+url = "http://localhost:11434/v1/chat/completions"
+payload = {"model":"llama3.2:3b","messages":[{"role":"user","content":"ping"}],"max_tokens":10}
+start = time.time()
+r = requests.post(url, json=payload, headers={"Authorization":"Bearer ollama"}, timeout=20)
+print("status", r.status_code, "time", time.time()-start)
+print(r.text[:1000])

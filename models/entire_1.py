@@ -18,9 +18,10 @@ from TTS.tts.models.xtts import Xtts #type: ignore
 from TTS.tts.utils.speakers import SpeakerManager #type: ignore
 from TTS.tts.utils.text.tokenizer import TTSTokenizer #type: ignore
 from TTS.tts.layers.xtts.tokenizer import VoiceBpeTokenizer #type: ignore
-from device_test import pick_device_with_both
+from models.device_test import pick_device_with_both
 import difflib
 import re
+from transformers import AutoTokenizer, AutoModelForCausalLM #type: ignore
 # ANSI escape codes for colors
 
 
@@ -50,7 +51,12 @@ def open_file(filepath):
         return infile.read()
 
 # Initialize the OpenAI client with the API key
-client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+# client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+
+llm_tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
+llm_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B-Instruct",
+                                             device_map="cpu",         # <- ensures CPU usage
+                                            torch_dtype="float32")
 
 
 def _clean_text_for_compare(s: str) -> str:
@@ -101,11 +107,12 @@ def confirm_and_apply_command_correction(transcript: str, threshold: float = 0.9
     cmd, similarity, n = find_best_command_match(transcript)
     if cmd is None:
         return transcript
-    if similarity < threshold:
-        return transcript
 
     # Prompt user (text prompt). Use full human-readable candidate.
     print(f"\nDid you mean the command: '{cmd}' ?  (similarity {similarity*100:.1f}%)")
+    if similarity < threshold or similarity > 0.98:
+        return transcript
+    
     ans = input("Type 'y' or 'yes' to accept, anything else to keep original: ").strip().lower()
     if ans in ("y", "yes"):
         # replace first n words of original transcript (preserve rest)
@@ -233,33 +240,55 @@ def process_and_play(prompt, audio_file_pth, output_device):
     except Exception as e:
         print(f"Error during audio generation: {e}")
 
-# Function to get relevant context
-def get_relevant_context(user_input, vault_embeddings, vault_content, model, top_k=3):
-    print("DEBUG: Retrieving relevant context from vault...")
+def get_relevant_context(user_input, embedding_model, notes_dir, embeddings_dir, threshold=0.70):
     """
-    Retrieves the top-k most relevant context from the vault based on the user input.
+    Return a list of note contents whose cosine similarity to the user_input
+    embedding is >= threshold. Results are sorted by descending similarity.
+    - user_input: string
+    - embedding_model: sentence-transformers model used to compute embedding
+    - notes_dir / embeddings_dir: folders used by load_notes_and_embeddings()
+    - threshold: float in [0,1]
     """
-    if vault_embeddings.nelement() == 0:  # Check if the tensor has any elements
-        print("DEBUG: Vault is empty, no context retrieved.")
+    print("DEBUG: Retrieving relevant context from stored embeddings (threshold {:.2f})...".format(threshold))
+
+    # Load current notes + embeddings
+    vault_content, vault_titles, vault_embeddings = load_notes_and_embeddings(embedding_model)
+
+    if vault_embeddings.nelement() == 0:
+        print("DEBUG: No embeddings available.")
         return []
-    # Encode the user input
-    input_embedding = model.encode([user_input])
-    # Compute cosine similarity between the input and vault embeddings
-    cos_scores = util.cos_sim(input_embedding, vault_embeddings)[0]
-    # Adjust top_k if it's greater than the number of available scores
-    top_k = min(top_k, len(cos_scores))
-    # Sort the scores and get the top-k indices
-    top_indices = torch.topk(cos_scores, k=top_k)[1].tolist()
-    # Get the corresponding context from the vault
-    relevant_context = [vault_content[idx].strip() for idx in top_indices]
-    print(f"DEBUG: Retrieved {len(relevant_context)} relevant contexts.")
-    return relevant_context
+
+    # Compute embedding for user input
+    input_emb_np = embedding_model.encode([user_input])
+    input_emb = torch.tensor(input_emb_np, dtype=torch.float32)  # shape (1, D)
+
+    # Move to same device / dtype if necessary (we use CPU tensors here)
+    # Compute cosine similarities
+    cos_scores = util.cos_sim(input_emb, vault_embeddings)[0]  # shape (N,)
+
+    # Get indices with similarity >= threshold
+    above_mask = cos_scores >= float(threshold)
+    if not above_mask.any():
+        print("DEBUG: No contexts above similarity threshold.")
+        return []
+
+    idxs = torch.where(above_mask)[0].tolist()
+    # sort indices by descending similarity
+    idxs.sort(key=lambda i: float(cos_scores[i]), reverse=True)
+
+    relevant_contexts = [vault_content[i].strip() for i in idxs]
+    similarities = [float(cos_scores[i]) for i in idxs]
+    print(f"DEBUG: Found {len(relevant_contexts)} contexts above threshold. Top similarity: {max(similarities):.3f}")
+
+    return relevant_contexts
+
 
 # Function to chat with streamed response
 def chatgpt_streamed(user_input, system_message, conversation_history, bot_name, vault_embeddings, vault_content, model):
     print(f"DEBUG: Preparing to send query to LLM: {user_input[:50]}... (truncated)")
     # Get relevant context from the vault
-    relevant_context = get_relevant_context(user_input, vault_embeddings, vault_content, model)
+    # threshold can be tuned (e.g. 0.65-0.80). using 0.70 by default here.
+    relevant_context = get_relevant_context(user_input, embedding_model, notes_dir, embeddings_dir, threshold=0.70)
     # Concatenate the relevant context with the user's input
     if relevant_context:
         user_input_with_context = "\n".join(relevant_context) + "\n\n" + user_input
@@ -274,14 +303,28 @@ def chatgpt_streamed(user_input, system_message, conversation_history, bot_name,
         {"role": "user", "content": user_input_with_context}
     ]
     print("DEBUG: Sending request to LLM model (llama3.2:3b)... Waiting for response.")
-    streamed_completion = client.chat.completions.create(
-        model="llama3.2:1b",
-        messages=messages,
-        stream=True,
-    )
+    
+    
+    inputs = llm_tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    ).to(llm_model.device)
+
+    outputs = llm_model.generate(**inputs, max_new_tokens=100)
+    response = llm_tokenizer.decode(outputs[0][inputs["input_ids"].shape[-1]:]).strip()
+    
     full_response = ""
     line_buffer = ""
-    for chunk in streamed_completion:
+    
+    # streamed_completion = client.chat.completions.create(
+    #     model="llama3.2:1b",
+    #     messages=messages,
+    #     stream=True,
+    # )
+    for chunk in response:
         delta_content = chunk.choices[0].delta.content
         if delta_content is not None:
             line_buffer += delta_content
@@ -345,51 +388,81 @@ def record_audio(file_path, input_device_index=None):
     print(f"DEBUG: Audio recording completed and saved to: {file_path}")
 
 
-# Function to load all active notes and embeddings
 def load_notes_and_embeddings(embedding_model):
-    print("DEBUG: Loading notes and embeddings...")
+    """
+    Load note text files from notes_dir and their embeddings from embeddings_dir.
+    If an embedding file is missing, compute it and save as .pt.
+    Returns: vault_content (list[str]), vault_titles (list[str]), vault_embeddings (torch.Tensor)
+    """
+    print("DEBUG: Loading notes and embeddings from folders...")
     vault_content = []
     vault_titles = []
-    vault_embeddings = []
-    for filename in os.listdir(notes_dir):
-        if filename.endswith('.txt'):
-            title = filename[:-4]  # Remove .txt
-            note_path = os.path.join(notes_dir, filename)
-            emb_path = os.path.join(embeddings_dir, f"{title}.pt")
-            
-            # Check expiration
-            if is_expired(note_path):
-                print(f"DEBUG: Deleting expired note: {title}")
+    vault_embeddings_list = []
+
+    for filename in sorted(os.listdir(notes_dir)):
+        if not filename.endswith('.txt'):
+            continue
+        title = filename[:-4]
+        note_path = os.path.join(notes_dir, filename)
+        emb_path = os.path.join(embeddings_dir, f"{title}.pt")
+
+        # Skip expired notes
+        if is_expired(note_path):
+            print(f"DEBUG: Deleting expired note: {title}")
+            try:
                 os.remove(note_path)
-                if os.path.exists(emb_path):
-                    os.remove(emb_path)
-                continue
-            
-            # Load content (skip JSON metadata)
-            with open(note_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-                if content.startswith('{"expiration":'):
-                    # Parse JSON metadata
-                    json_end = content.find('\n')
-                    metadata = json.loads(content[:json_end])
-                    content = content[json_end+1:].strip()
-                else:
-                    metadata = {}
-            
-            vault_content.append(content)
-            vault_titles.append(title)
-            
-            # Load or compute embedding
+            except OSError:
+                pass
             if os.path.exists(emb_path):
-                emb = torch.load(emb_path)
+                try:
+                    os.remove(emb_path)
+                except OSError:
+                    pass
+            continue
+
+        # Load note content (skip JSON metadata if present)
+        with open(note_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+            if content.startswith('{"expiration":'):
+                json_end = content.find('\n')
+                try:
+                    metadata = json.loads(content[:json_end])
+                except Exception:
+                    metadata = {}
+                content = content[json_end+1:].strip()
             else:
-                emb = torch.tensor(embedding_model.encode([content]))
+                metadata = {}
+
+        # Load existing embedding or compute & save
+        if os.path.exists(emb_path):
+            try:
+                emb = torch.load(emb_path)
+                # ensure 2D (N x D)
+                if emb.dim() == 1:
+                    emb = emb.unsqueeze(0)
+            except Exception as e:
+                print(f"DEBUG: Failed to load embedding {emb_path}: {e}. Recomputing.")
+                emb_np = embedding_model.encode([content])
+                emb = torch.tensor(emb_np, dtype=torch.float32)
                 torch.save(emb, emb_path)
-            
-            vault_embeddings.append(emb)
-    
-    vault_embeddings = torch.cat(vault_embeddings, dim=0) if vault_embeddings else torch.tensor([])
-    print(f"DEBUG: Loaded {len(vault_titles)} active notes.")
+        else:
+            emb_np = embedding_model.encode([content])
+            emb = torch.tensor(emb_np, dtype=torch.float32)
+            try:
+                torch.save(emb, emb_path)
+            except Exception as e:
+                print(f"DEBUG: Warning: couldn't save embedding to {emb_path}: {e}")
+
+        vault_titles.append(title)
+        vault_content.append(content)
+        vault_embeddings_list.append(emb)
+
+    if vault_embeddings_list:
+        vault_embeddings = torch.cat(vault_embeddings_list, dim=0)  # shape: (N, D)
+    else:
+        vault_embeddings = torch.tensor([])
+
+    print(f"DEBUG: Loaded {len(vault_titles)} active notes and embeddings.")
     return vault_content, vault_titles, vault_embeddings
 
 
@@ -485,10 +558,13 @@ def parse_note_creation(content_after_command):
     print(f"DEBUG: Parsing note creation input: {content_after_command[:50]}... (truncated)")
     # Few-shot prompt examples for LLM
     few_shot_prompt = """
-    You are a note parsing assistant. Given an input string after "create note", extract and return a JSON object with:
+    You are a note parsing assistant. Given any input string return a JSON object with:
     - Title: A short 1-4 word title from the input if specified, else generate a descriptive one.
     - Note: The main content after removing title and duration (if present).
     - Duration: The duration in seconds if specified (e.g., " 30 days"), else None.
+    Output requirements (CRITICAL):
+    - Output **ONLY** a single valid JSON object (no surrounding text, no explanation, no backticks, no code fences).
+    - Use ISO formatting for no special tokens. If you cannot determine duration, use null for Duration.
 
     Examples:
     Input: "I am very happy today and had an amazing day keep this note for 3 months"
@@ -506,16 +582,50 @@ def parse_note_creation(content_after_command):
         {"role": "system", "content": few_shot_prompt},
         {"role": "user", "content": content_after_command}
     ]
-    
+        
+    inputs = llm_tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    ).to(llm_model.device)
+
+    outputs = llm_model.generate(**inputs, max_new_tokens=100)
+    response = llm_tokenizer.decode(outputs[0][inputs["input_ids"].shape[-1]:])
     # Get LLM response
-    response = client.chat.completions.create(
-        model="llama3.2:1b",
-        messages=messages,
-        stream=False  # Non-streaming for simplicity in parsing
-    )
+    # response = client.chat.completions.create(
+    #     model="llama3.2:1b",
+    #     messages=messages,
+    #     stream=False  # Non-streaming for simplicity in parsing
+    # )
     
+    print("[DEBUG] response before: ", response.strip())
+    
+    def _extract_first_json_object(text: str):
+        """
+        Find and return the first balanced JSON object substring from text.
+        Returns the substring or None if not found.
+        """
+        start = None
+        depth = 0
+        for i, ch in enumerate(text):
+            if ch == '{':
+                if start is None:
+                    start = i
+                depth += 1
+            elif ch == '}':
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        return text[start:i+1]
+        return None
+    
+    response = _extract_first_json_object(response)
+    
+    print("[DEBUG] response after: ", response.strip())
     try:
-        parsed_result = json.loads(response.choices[0].message.content.strip())
+        parsed_result = json.loads(response.strip())
         print(f"DEBUG: Parsed result: {parsed_result}")
         return parsed_result
     except json.JSONDecodeError as e:
@@ -531,19 +641,10 @@ if __name__ == "__main__":
     print("DEBUG: Loading sentence transformer model...")
     embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
     print("DEBUG: Sentence transformer model loaded.")
-    # Path to the vault file
-    vault_path = "vault.txt"
-    # Load initial vault content
-    print(f"DEBUG: Loading vault content from: {vault_path}")
-    if os.path.exists(vault_path):
-        with open(vault_path, "r", encoding="utf-8") as vault_file:
-            vault_content = vault_file.readlines()
-    else:
-        vault_content = []
-    # Create initial embeddings
-    vault_embeddings = embedding_model.encode(vault_content) if vault_content else []
-    vault_embeddings = torch.tensor(vault_embeddings)
-    print("DEBUG: Vault embeddings created.")
+    
+    # Load notes + embeddings from the notes/embeddings folders
+    vault_content, vault_titles, vault_embeddings = load_notes_and_embeddings(embedding_model)
+
     # Conversation setup
     conversation_history = []
     system_message = "You are a helpful desktop assistant. You have a bitchy personality that complains about the work being given and you answer in short like having a real-time conversation "  # Customize as needed
@@ -563,8 +664,9 @@ if __name__ == "__main__":
         # print(f"DEBUG: Cleaned up temporary audio file: {audio_file}")
         user_input_lower = user_input.lower()
         user_input_lower = confirm_and_apply_command_correction(user_input_lower, threshold=0.85)
+        user_input_lower = "create note i will stay awake till tomorrow at 8 am keep this note for 9 hours"
+        user_input = "create note i will stay awake till tomorrow at 8 am keep this note for 9 hours"
         m = re.match(r'^\s*create\s+note\b(.*)$', user_input_lower, flags=re.IGNORECASE)
-            
         if user_input_lower == "exit":
             print("DEBUG: Exit command detected. Breaking loop.")
             break
