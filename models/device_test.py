@@ -29,10 +29,22 @@ def friendly_base_name(raw_name):
     par = re.findall(r'\(([^)]*)\)', s)
     if par:
         candidate = par[-1].strip()
-        if candidate and not re.search(r'(driver|output|input|hf audio|hands-free|#\d)', candidate, re.I):
+        # Remove leading number prefixes like "2- " from device names
+        candidate = re.sub(r'^\d+-?\s*', '', candidate)
+        # Check if this looks like a proper model name (contains manufacturer/model identifiers)
+        # Use parentheses content only if it has specific brand/model patterns (numbers+letters, hyphens)
+        is_model_name = (
+            candidate and 
+            not re.search(r'^(driver|output|input|hf audio|hands-free|high definition|realtek|test|audio|device|#\d)', candidate, re.I) and
+            (re.search(r'[A-Z][a-z]+\s+[A-Z]', candidate) or  # CamelCase words (Microsoft LifeChat)
+             re.search(r'\w+-\w+', candidate) or  # Hyphenated model numbers (LX-3000)
+             re.search(r'[A-Z]{2,}', candidate))  # Uppercase abbreviations
+        )
+        if is_model_name:
             base = candidate
         else:
-            base = s.split('(')[0]
+            # Use the part before the first parenthesis
+            base = s.split('(')[0].strip()
     else:
         base = s
     base = re.sub(r'[^0-9A-Za-z\-\._ ]+', ' ', base)

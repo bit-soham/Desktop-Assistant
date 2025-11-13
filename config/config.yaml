@@ -1,0 +1,3 @@
+llm:
+  use_local_model: false
+  hf_model: "HuggingFaceTB/SmolLM3-3B"

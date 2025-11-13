@@ -4,6 +4,7 @@ import torch
 from datetime import datetime, timedelta
 from sentence_transformers import SentenceTransformer # type: ignore
 import re
+from .llm_interface import LLMInterface, USE_LOCAL_MODEL
 
 # ANSI escape codes for colors
 PINK = '\033[95m'
@@ -13,10 +14,13 @@ NEON_GREEN = '\033[92m'
 RESET_COLOR = '\033[0m'
 
 class NoteManager:
-    def __init__(self, notes_dir='notes', embeddings_dir='embeddings', embedding_model=None):
+    def __init__(self, notes_dir='user_data/notes', embeddings_dir='user_data/embeddings', embedding_model=None,
+                 llm_interface=None, use_local_llm=USE_LOCAL_MODEL):
         self.notes_dir = notes_dir
         self.embeddings_dir = embeddings_dir
         self.embedding_model = embedding_model
+        self.llm_interface = llm_interface
+        self.use_local_llm = use_local_llm
         os.makedirs(notes_dir, exist_ok=True)
         os.makedirs(embeddings_dir, exist_ok=True)
 
@@ -109,11 +113,14 @@ class NoteManager:
         return False
 
     # Function to create or edit note
-    def manage_note(self, action, title, text, seconds=None):
+    def manage_note(self, action, title, text=None, seconds=None):
         note_path = os.path.join(self.notes_dir, f"{title}.txt")
         emb_path = os.path.join(self.embeddings_dir, f"{title}.pt")
 
         if action == "create" or action == "edit":
+            if text is None:
+                return False  # Need text for create/edit
+            
             metadata = {}
             if seconds:
                 exp_time = datetime.now() + timedelta(seconds=seconds)
@@ -128,13 +135,19 @@ class NoteManager:
             emb = torch.tensor(self.embedding_model.encode([text]))
             torch.save(emb, emb_path)
             print(f"DEBUG: {action.capitalize()}d note '{title}'.")
+            return True
 
         elif action == "delete":
+            success = False
             if os.path.exists(note_path):
                 os.remove(note_path)
+                success = True
             if os.path.exists(emb_path):
                 os.remove(emb_path)
-            print(f"DEBUG: Deleted note '{title}'.")
+                success = True
+            if success:
+                print(f"DEBUG: Deleted note '{title}'.")
+            return success
 
     # Function to list notes
     def list_notes(self):
@@ -184,8 +197,33 @@ class NoteManager:
             print("DEBUG: Unknown unit; defaulting to never expire.")
             return None
 
-    def parse_note_creation(self, content_after_command, llm_tokenizer, llm_model):
+    def parse_note_creation(self, content_after_command, llm_tokenizer=None, llm_model=None):
+        """
+        Parse note creation command using LLM (local or API based on configuration).
+        
+        Args:
+            content_after_command (str): The text after "create note" command
+            llm_tokenizer: Local model tokenizer (optional, for backward compatibility)
+            llm_model: Local model (optional, for backward compatibility)
+        
+        Returns:
+            dict: Parsed note with 'Title', 'Note', and 'Duration' keys
+        """
         print(f"DEBUG: Parsing note creation input: {content_after_command[:50]}... (truncated)")
+        
+        # Initialize LLM interface if not already done
+        if self.llm_interface is None:
+            if self.use_local_llm and llm_tokenizer and llm_model:
+                self.llm_interface = LLMInterface(
+                    use_local=True,
+                    llm_tokenizer=llm_tokenizer,
+                    llm_model=llm_model
+                )
+            elif not self.use_local_llm:
+                self.llm_interface = LLMInterface(use_local=False)
+            else:
+                raise ValueError("LLM interface not initialized and required models not provided")
+        
         # Few-shot prompt examples for LLM
         few_shot_prompt = """
         You are a note parsing assistant. Given any input string return a JSON object with:
@@ -195,13 +233,14 @@ class NoteManager:
         Output requirements (CRITICAL):
         - Output **ONLY** a single valid JSON object (no surrounding text, no explanation, no backticks, no code fences).
         - Use ISO formatting for no special tokens. If you cannot determine duration, use null for Duration.
+        - The Note should contain only the main content of the note remove the title and duration parts that is in the string like remove 'keep this note for x duration like in the first example' or remove the mention of the title from the note content.
 
         Examples:
         Input: "I am very happy today and had an amazing day keep this note for 3 months"
         Output: {"Title": "My amazing day", "Note": "I am very happy today and had an amazing day", "Duration": 7776000}
 
         Input: "I will try to buy groceries everyday for 2 hours"
-        Output: {"Title": "grocery task", "Note": "I will try to buy groceries everyday for 2 hours", "Duration": None}
+        Output: {"Title": "grocery task", "Note": "I will try to buy groceries everyday for 2 hours", "Duration": null}
 
         Input: "plan my day everyday title daily plan note for 45 days"
         Output: {"Title": "daily plan", "Note": "plan my day everyday", "Duration": 3888000}
@@ -213,28 +252,10 @@ class NoteManager:
             {"role": "user", "content": content_after_command}
         ]
 
-        inputs = llm_tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(llm_model.device)
+        # Generate response using unified interface
+        response = self.llm_interface.generate(messages, max_new_tokens=150)
         
-        # Ensure pad_token and attention_mask are set to avoid warnings
-        if llm_tokenizer.pad_token is None:
-            llm_tokenizer.pad_token = llm_tokenizer.eos_token
-
-        if 'attention_mask' not in inputs:
-            import torch as _torch
-            # Create attention mask: 1 for non-pad tokens, 0 for pad tokens
-            inputs['attention_mask'] = (inputs['input_ids'] != llm_tokenizer.pad_token_id).long()
-            
-        outputs = llm_model.generate(**inputs, pad_token_id=llm_tokenizer.eos_token_id, max_new_tokens=100)
-        response = llm_tokenizer.decode(outputs[0][inputs["input_ids"].shape[-1]:]).strip()
-        
-        # Remove <|eot_id|> token from response
-        response = response.replace("<|eot_id|>", "").strip()
+        print(f"DEBUG: Raw LLM response: {response[:200]}...")
         # Get LLM response
         # response = client.chat.completions.create(
         #     model="llama3.2:1b",
@@ -267,12 +288,15 @@ class NoteManager:
 
         response = _extract_first_json_object(response)
 
-        print("[DEBUG] response after: ", response.strip())
+        print("[DEBUG] response after: ", response.strip() if response else "None")
         try:
+            if response is None:
+                # No JSON object found in response
+                raise ValueError("No JSON found in response")
             parsed_result = json.loads(response.strip())
             print(f"DEBUG: Parsed result: {parsed_result}")
             return parsed_result
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, ValueError) as e:
             print(f"DEBUG: Failed to parse LLM response as JSON: {e}")
             # Fallback: Generate default if LLM fails
             title = datetime.now().strftime("%Y%m%d_%H%M%S")

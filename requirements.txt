@@ -2,3 +2,7 @@ pyaudio
 websocket-client
 google-generativeai 
 numpy
+PyQt6
+huggingface-hub
+pyyaml
+python-dotenv

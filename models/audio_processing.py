@@ -77,7 +77,7 @@ class AudioProcessor:
         return transcription
 
     # Function to synthesize speech using XTTS (with safe chunking <= 230 chars)
-    def process_and_play(self, prompt, audio_file_pth, output_device):
+    def process_and_play(self, prompt, audio_file_pth, output_device, orb_controller=None):
         print(f"DEBUG: Starting speech synthesis for prompt: {prompt[:50]}... (truncated)")
         
         def _split_into_chunks(text: str, max_len: int = 230):
@@ -143,6 +143,8 @@ class AudioProcessor:
             print(f"DEBUG: Saving synthesized audio to: {src_path}")
             sf.write(src_path, full_audio, sample_rate)
             print("Audio generated successfully.")
+            if orb_controller:
+                orb_controller.set_state("talking")
             self.play_audio(src_path, output_device)
         except Exception as e:
             error_msg = str(e)

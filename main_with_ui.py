@@ -1,8 +1,8 @@
 import argparse
 import os
 import re
+import threading
 from datetime import datetime
-import time
 
 # Import our modules
 from models.audio_processing import AudioProcessor
@@ -11,10 +11,9 @@ from models.note_management import NoteManager
 from models.rag_llm import RAGLLMProcessor
 from models.model_setup import setup_whisper_model, setup_xtts_model, setup_llm_model, setup_embedding_model
 from models.device_test import pick_device_with_both
-from models.llm_interface import create_llm_interface, USE_LOCAL_MODEL
 
 # Import UI controller
-from ui.orb_controller import OrbController
+from ui.orb_controller import OrbController, OrbThread
 
 # ANSI escape codes for colors
 PINK = '\033[95m'
@@ -45,14 +44,17 @@ def main():
     
     # Initialize UI controller if UI is enabled
     orb_controller = None
+    orb_thread = None
     
     if not args.no_ui:
         print("DEBUG: Initializing UI...")
         orb_controller = OrbController()
-        orb_controller.start_ui()
+        orb_thread = OrbThread(orb_controller)
+        orb_thread.start()
         
         # Give UI time to initialize
-        time.sleep(2)
+        import time
+        time.sleep(1)
         print("DEBUG: UI initialized and running in separate thread")
 
     # Setup all models
@@ -62,32 +64,13 @@ def main():
     print("DEBUG: Loading models...")
     whisper_model = setup_whisper_model()
     xtts_model, xtts_config = setup_xtts_model()
-    
-    # Set whether to use local or API model
-    use_local = USE_LOCAL_MODEL  # Change this in models/llm_interface.py or set it here
-    
-    if use_local:
-        print(CYAN + "Using LOCAL LLM model" + RESET_COLOR)
-        llm_tokenizer, llm_model = setup_llm_model()
-    else:
-        print(CYAN + "Using HUGGING FACE API model" + RESET_COLOR)
-        llm_tokenizer, llm_model = None, None  # Not needed for API
-    
+    llm_tokenizer, llm_model = setup_llm_model()
     embedding_model = setup_embedding_model()
-    
-    # Create unified LLM interface
-    llm_interface = create_llm_interface(
-        use_local=use_local,
-        llm_tokenizer=llm_tokenizer,
-        llm_model=llm_model
-    )
 
-    # Initialize processors with LLM interface
+    # Initialize processors
     audio_processor = AudioProcessor(whisper_model, xtts_model, xtts_config)
-    note_manager = NoteManager(notes_dir, embeddings_dir, embedding_model, 
-                                llm_interface=llm_interface, use_local_llm=use_local)
-    rag_llm_processor = RAGLLMProcessor(llm_tokenizer, llm_model, embedding_model, notes_dir, embeddings_dir,
-                                        llm_interface=llm_interface, use_local_llm=use_local)
+    note_manager = NoteManager(notes_dir, embeddings_dir, embedding_model)
+    rag_llm_processor = RAGLLMProcessor(llm_tokenizer, llm_model, embedding_model, notes_dir, embeddings_dir)
 
     # Conversation setup
     conversation_history = []
@@ -119,9 +102,7 @@ def main():
             
         user_input = audio_processor.transcribe_with_whisper(audio_file)
         user_input_lower = user_input.lower()
-        corrected_transcript = confirm_and_apply_command_correction(user_input_lower, threshold=0.85)
-        user_input = corrected_transcript
-        user_input_lower = corrected_transcript.lower()
+        user_input_lower = confirm_and_apply_command_correction(user_input_lower, threshold=0.85)
         
         # Handle exit command
         m = re.match(r'^\s*create\s+note\b(.*)$', user_input_lower, flags=re.IGNORECASE)
@@ -139,6 +120,7 @@ def main():
             # Brief talking animation for confirmation
             if orb_controller:
                 orb_controller.set_state("talking")
+                import time
                 time.sleep(1)
                 orb_controller.set_state("idle")
             continue
@@ -150,7 +132,6 @@ def main():
                 orb_controller.set_state("processing")
                 
             note_part = m.group(1).strip()
-            # Note: llm_tokenizer and llm_model can be None if using API
             parsed_notes = note_manager.parse_note_creation(note_part, llm_tokenizer, llm_model)
             title = parsed_notes['Title']
             note_text = parsed_notes['Note']
@@ -161,11 +142,11 @@ def main():
                 print("DEBUG: No duration specified in initial parse. Asking user for duration.")
                 
                 # Set to talking state for TTS
-                # if orb_controller:
-                #     orb_controller.set_state("talking")
+                if orb_controller:
+                    orb_controller.set_state("talking")
                     
                 duration_prompt = "Ugh, fine, how long do you want this note to last? Say something like '3 days' or 'forever' if no expiration."
-                audio_processor.process_and_play(duration_prompt, speaker_sample_path, output_device, orb_controller)
+                audio_processor.process_and_play(duration_prompt, speaker_sample_path, output_device)
 
                 # Set to listening state for recording
                 if orb_controller:
@@ -178,7 +159,7 @@ def main():
                 if orb_controller:
                     orb_controller.set_state("processing")
                     
-                duration_response = audio_processor.transcribe_with_whisper(duration_audio)
+                duration_response = rag_llm_processor.transcribe_with_whisper(duration_audio)
                 os.remove(duration_audio)
 
                 duration_seconds = note_manager.parse_duration_response(duration_response)
@@ -193,10 +174,10 @@ def main():
             confirm_msg = f"Note '{title}' created. {f'It expires in {duration_seconds} seconds.' if duration_seconds else 'It never expires.'}"
             print('DEBUG: Note Creation Confirm msg: ', confirm_msg)
             
-            # if orb_controller:
-            #     orb_controller.set_state("talking")
+            if orb_controller:
+                orb_controller.set_state("talking")
                 
-            audio_processor.process_and_play(confirm_msg, speaker_sample_path, output_device, orb_controller)
+            audio_processor.process_and_play(confirm_msg, speaker_sample_path, output_device)
             
             if orb_controller:
                 orb_controller.set_state("idle")
@@ -223,15 +204,15 @@ def main():
         conversation_history.append({"role": "user", "content": user_input})
         print(PINK + f"{bot_name}: " + RESET_COLOR)
         
-        chat_response = rag_llm_processor.chatgpt_streamed(user_input, system_message, conversation_history, bot_name, threshold=0.50)
+        chat_response = rag_llm_processor.chatgpt_streamed(user_input, system_message, conversation_history, bot_name, threshold=0.70)
         conversation_history.append({"role": "assistant", "content": chat_response})
         
         # Set to talking state during TTS
-        # if orb_controller:
-        #     orb_controller.set_state("talking")
-
-        audio_processor.process_and_play(chat_response, speaker_sample_path, output_device, orb_controller)
-
+        if orb_controller:
+            orb_controller.set_state("talking")
+            
+        audio_processor.process_and_play(chat_response, speaker_sample_path, output_device)
+        
         # Return to idle
         if orb_controller:
             orb_controller.set_state("idle")
@@ -242,8 +223,9 @@ def main():
     
     # Cleanup
     print("DEBUG: Shutting down...")
-    if orb_controller:
-        orb_controller.stop_ui()
+    if orb_thread:
+        orb_thread.quit()
+        orb_thread.wait()
 
 if __name__ == "__main__":
     main()

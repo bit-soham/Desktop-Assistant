@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from sentence_transformers import util
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from .llm_interface import LLMInterface, USE_LOCAL_MODEL
 
 # ANSI escape codes for colors
 PINK = '\033[95m'
@@ -13,12 +14,15 @@ NEON_GREEN = '\033[92m'
 RESET_COLOR = '\033[0m'
 
 class RAGLLMProcessor:
-    def __init__(self, llm_tokenizer, llm_model, embedding_model, notes_dir='notes', embeddings_dir='embeddings'):
+    def __init__(self, llm_tokenizer, llm_model, embedding_model, notes_dir='notes', embeddings_dir='embeddings',
+                 llm_interface=None, use_local_llm=USE_LOCAL_MODEL):
         self.llm_tokenizer = llm_tokenizer
         self.llm_model = llm_model
         self.embedding_model = embedding_model
         self.notes_dir = notes_dir
         self.embeddings_dir = embeddings_dir
+        self.llm_interface = llm_interface
+        self.use_local_llm = use_local_llm
 
     def get_relevant_context(self, user_input, threshold=0.70):
         """
@@ -152,62 +156,57 @@ class RAGLLMProcessor:
 
     # Function to chat with streamed response
     def chatgpt_streamed(self, user_input, system_message, conversation_history, bot_name, threshold=0.70):
+        """
+        Generate a streamed response using RAG context and LLM (local or API).
+        
+        Args:
+            user_input (str): User's query
+            system_message (str): System prompt
+            conversation_history (list): Previous conversation messages
+            bot_name (str): Name of the bot
+            threshold (float): Similarity threshold for RAG context retrieval
+        
+        Returns:
+            str: Generated response
+        """
         print(f"DEBUG: Preparing to send query to LLM: {user_input[:50]}... (truncated)")
+        
+        # Initialize LLM interface if not already done
+        if self.llm_interface is None:
+            if self.use_local_llm and self.llm_tokenizer and self.llm_model:
+                self.llm_interface = LLMInterface(
+                    use_local=True,
+                    llm_tokenizer=self.llm_tokenizer,
+                    llm_model=self.llm_model
+                )
+            elif not self.use_local_llm:
+                self.llm_interface = LLMInterface(use_local=False)
+            else:
+                raise ValueError("LLM interface not initialized and required models not provided")
+        
         # Get relevant context from the vault
-        # threshold can be tuned (e.g. 0.65-0.80). using 0.70 by default here.
         relevant_context = self.get_relevant_context(user_input, threshold=threshold)
+        
         # Concatenate the relevant context with the user's input
         if relevant_context:
             user_input_with_context = "\n".join(relevant_context) + "\n\n" + user_input
-            print("DEBUG: Added relevant context to user input. New context:", user_input_with_context)
+            print("DEBUG: Added relevant context to user input.")
         else:
             user_input_with_context = user_input
             print("DEBUG: No relevant context found.")
+        
         # Prepare the messages
         messages = [
             {"role": "system", "content": system_message}
         ] + conversation_history + [
             {"role": "user", "content": user_input_with_context}
         ]
-        print("DEBUG: Sending request to LLM model (llama3.2:3b)... Waiting for response.")
-
-
-        # Build inputs via chat template
-        inputs = self.llm_tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.llm_model.device)
-
-        # Ensure pad_token and attention_mask are set to avoid warnings
-        if self.llm_tokenizer.pad_token is None:
-            self.llm_tokenizer.pad_token = self.llm_tokenizer.eos_token
-
-        if 'attention_mask' not in inputs:
-            import torch as _torch
-            inputs['attention_mask'] = _torch.ones_like(inputs['input_ids'])
-
-        outputs = self.llm_model.generate(
-            **inputs,
-            pad_token_id=self.llm_tokenizer.eos_token_id,
-            max_new_tokens=100,
-        )
-        response = self.llm_tokenizer.decode(outputs[0][inputs["input_ids"].shape[-1]:]).strip()
         
-        # Remove <|eot_id|> token from response
-        response = response.replace("<|eot_id|>", "").strip()
-
+        # Use streaming generation for better user experience
         full_response = ""
         line_buffer = ""
-
-        # streamed_completion = client.chat.completions.create(
-        #     model="llama3.2:1b",
-        #     messages=messages,
-        #     stream=True,
-        # )
-        for chunk in response:
+        
+        for chunk in self.llm_interface.generate_streaming(messages, max_new_tokens=512):
             delta_content = chunk
             if delta_content is not None:
                 line_buffer += delta_content
@@ -217,20 +216,10 @@ class RAGLLMProcessor:
                         print(NEON_GREEN + line + RESET_COLOR)
                         full_response += line + "\n"
                     line_buffer = lines[-1]
+        
         if line_buffer:
             print(NEON_GREEN + line_buffer + RESET_COLOR)
             full_response += line_buffer
-
-        # if '</think>' in full_response:
-        #     # Find the last occurrence of </think>
-        #     last_think_end = full_response.rfind('</think>')
-        #     if last_think_end != -1:
-        #         full_response = full_response[last_think_end + len('</think>'):].strip()
-        #         print("DEBUG: Extracted response after </think> tag.")
-        #     else:
-        #         print("DEBUG: No </think> tag found; returning full response.")
-        # else:
-        #     print("DEBUG: No <think> tags found; returning full response.")
 
         print(f"DEBUG: Received LLM response: {full_response[:50]}... (truncated)")
         return full_response
