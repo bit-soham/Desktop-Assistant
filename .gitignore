@@ -3,3 +3,4 @@ token.json
 .env
 client_secrets.json
 __archive__/
+*token.json

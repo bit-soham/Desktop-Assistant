@@ -1,2 +1,2 @@
-{"expiration": "2025-11-23T11:42:40.079842"}
+{"expiration": "2025-11-11T11:42:40.079842"}
 nvidia is a company making the gpus. i have a meeting with them at 6 am.
