@@ -5,6 +5,11 @@ CANONICAL_COMMANDS = [
     "create note",
     "delete note",
     "list notes",
+    "send email",
+    "check gmail",
+    "create event",
+    "list events",
+    "search event",
     "exit",
     # add more commands you support, exact canonical phrases you want to force
 ]

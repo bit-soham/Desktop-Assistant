@@ -6,3 +6,9 @@ PyQt6
 huggingface-hub
 pyyaml
 python-dotenv
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+langchain
+langchain-community
+sentence-transformers

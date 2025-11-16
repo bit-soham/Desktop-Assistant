@@ -2,8 +2,8 @@ import torch
 import os
 import json
 from datetime import datetime
-from sentence_transformers import util
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from sentence_transformers import util #type:ignore
+from transformers import AutoTokenizer, AutoModelForCausalLM #type:ignore
 from .llm_interface import LLMInterface, USE_LOCAL_MODEL
 
 # ANSI escape codes for colors

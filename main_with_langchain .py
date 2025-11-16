@@ -1,7 +1,28 @@
+"""
+Desktop Assistant with LangChain-based Command Routing
+
+This version uses LangChain and LLM for intelligent command classification instead of regex.
+The CommandRouter analyzes user intent and routes to appropriate handlers.
+
+Commands supported:
+- create_note: Create a new note
+- delete_note: Delete an existing note
+- list_notes: List all notes
+- send_email: Send an email
+- check_gmail: Check Gmail for emails
+- create_event: Create a calendar event
+- list_events: List calendar events
+- search_event: Search for calendar events
+- conversation: General conversation with RAG/LLM
+- exit: Exit the application
+
+The system intelligently determines whether the user wants to execute a command
+or have a conversation, without relying on exact command patterns.
+"""
 import argparse
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 # Import our modules
@@ -19,6 +40,9 @@ from services.calendar_services import CalendarService, DurationParser, EventPar
 
 # Import UI controller
 from ui.orb_controller import OrbController
+
+# Import LangChain-based command router
+from core.command_router import CommandRouter
 
 # ANSI escape codes for colors
 PINK = '\033[95m'
@@ -102,6 +126,9 @@ def main():
     duration_parser = DurationParser()
     time_parser = TimeParser()
     event_parser = EventParser(llm_interface)
+    
+    # Initialize LangChain-based command router
+    command_router = CommandRouter(llm_interface)
 
     # Conversation setup
     conversation_history = []
@@ -137,22 +164,21 @@ def main():
         user_input = corrected_transcript
         user_input_lower = corrected_transcript.lower()
         
-        # Handle exit command
-        m_create_note = re.match(r'^\s*create\s+note\b(.*)$', user_input_lower, flags=re.IGNORECASE)
-        m_send_email = re.match(r'^\s*send\s+email\b(.*)$', user_input_lower, flags=re.IGNORECASE)
-        m_check_gmail = re.match(r'^\s*check\s+gmail\b(.*)$', user_input_lower, flags=re.IGNORECASE)
-        m_create_event = re.match(r'^\s*create\s+event\b(.*)$', user_input_lower, flags=re.IGNORECASE)
-        m_list_events = re.match(r'^\s*list\s+events\b(.*)$', user_input_lower, flags=re.IGNORECASE)
-        m_search_event = re.match(r'^\s*search\s+event\b(.*)$', user_input_lower, flags=re.IGNORECASE)
+        # Use LangChain-based command router for intent classification
+        classification = command_router.classify_intent(user_input)
+        command = classification['command']
+        parameters = classification['parameters']
         
-        if user_input_lower == "exit":
+        print(f"DEBUG: Intent classification - Command: {command}, Confidence: {classification['confidence']:.2f}")
+        
+        if command == 'exit':
             print("DEBUG: Exit command detected. Breaking loop.")
             if orb_controller:
                 orb_controller.set_state("idle")
             break
             
         # Handle list notes command
-        elif user_input_lower.startswith("list notes"):
+        elif command == 'list_notes':
             print("DEBUG: Processing 'list notes' command...")
             note_manager.list_notes()
             
@@ -164,15 +190,16 @@ def main():
             continue
             
         # Handle send email command
-        elif m_send_email:
+        elif command == 'send_email':
             print("DEBUG: Processing 'send email' command...")
             if orb_controller:
                 orb_controller.set_state("processing")
             
-            email_part = "send email " +  m_send_email.group(1).strip()
+            # Use full user input - LLM parser handles natural language
+            email_part = user_input
             
-            # If no email content after command, ask for it
-            if not email_part:
+            # Basic check if input seems too short
+            if len(email_part.strip()) < 5:
                 prompt = "Ugh, fine. Tell me the recipient, subject, and what you want to say."
                 audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
                 
@@ -326,15 +353,16 @@ def main():
             continue
         
         # Handle check gmail command
-        elif m_check_gmail:
+        elif command == 'check_gmail':
             print("DEBUG: Processing 'check gmail' command...")
             if orb_controller:
                 orb_controller.set_state("processing")
             
-            search_query = m_check_gmail.group(1).strip()
+            # Use full user input - will extract query from natural language
+            search_query = user_input
             
-            # If no search query, ask what to check for
-            if not search_query:
+            # Basic check if input seems too short or generic
+            if len(search_query.strip()) < 5 or search_query.lower().strip() in ['check gmail', 'check email', 'gmail', 'email']:
                 prompt = "What do you want me to check your emails for?"
                 audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
                 
@@ -375,15 +403,16 @@ def main():
             continue
         
         # Handle create event command
-        elif m_create_event:
+        elif command == 'create_event':
             print("DEBUG: Processing 'create event' command...")
             if orb_controller:
                 orb_controller.set_state("processing")
             
-            event_part = m_create_event.group(1).strip()
+            # Use full user input - LLM parser handles natural language like "make an event for gym at 3pm"
+            event_part = user_input
             
-            # If no event details after command, ask for them
-            if not event_part:
+            # Basic check if input seems too short
+            if len(event_part.strip()) < 5:
                 prompt = "What's the event? Tell me the title, description, start time, and end time."
                 audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
                 
@@ -445,32 +474,14 @@ def main():
             else:
                 end_time = None
             
-            # If start time not provided, ask for it
+            # If start time not provided, ask for it in terminal
             if start_time is None:
-                prompt = "When should the event start? Tell me the date and time."
-                audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
+                print(f"\n{YELLOW}Start time is required. Please enter start time (e.g., '19:00' or '7pm'):{RESET_COLOR}")
+                start_input = input("Start time: ").strip()
                 
-                if orb_controller:
-                    orb_controller.set_state("listening")
-                
-                start_audio = "event_start.wav"
-                audio_processor.record_audio(start_audio, input_device)
-                
-                if orb_controller:
-                    orb_controller.set_state("processing")
-                
-                start_text = audio_processor.transcribe_with_whisper(start_audio)
-                os.remove(start_audio)
-                
-                # Parse start time
-                date_obj = time_parser.parse_date_string(start_text)
-                time_obj = time_parser.parse_time_string(start_text)
-                
-                if date_obj is None:
-                    date_obj = datetime.now().date()
-                
+                time_obj = time_parser.parse_time_string(start_input)
                 if time_obj:
-                    start_time = datetime.combine(date_obj, time_obj)
+                    start_time = datetime.combine(event_date, time_obj)
                 else:
                     error_msg = "I couldn't understand the start time. Event not created."
                     audio_processor.process_and_play(error_msg, speaker_sample_path, output_device, orb_controller)
@@ -478,33 +489,14 @@ def main():
                         orb_controller.set_state("idle")
                     continue
             
-            # If end time not provided, ask for it
+            # If end time not provided, ask for it in terminal
             if end_time is None:
-                prompt = "When should the event end? Tell me the date and time."
-                audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
+                print(f"\n{YELLOW}End time is required. Please enter end time (e.g., '20:00' or '8pm'):{RESET_COLOR}")
+                end_input = input("End time: ").strip()
                 
-                if orb_controller:
-                    orb_controller.set_state("listening")
-                
-                end_audio = "event_end.wav"
-                audio_processor.record_audio(end_audio, input_device)
-                
-                if orb_controller:
-                    orb_controller.set_state("processing")
-                
-                end_text = audio_processor.transcribe_with_whisper(end_audio)
-                os.remove(end_audio)
-                
-                # Parse end time
-                date_obj = time_parser.parse_date_string(end_text)
-                time_obj = time_parser.parse_time_string(end_text)
-                
-                if date_obj is None:
-                    # Use start time's date
-                    date_obj = start_time.date()
-                
+                time_obj = time_parser.parse_time_string(end_input)
                 if time_obj:
-                    end_time = datetime.combine(date_obj, time_obj)
+                    end_time = datetime.combine(event_date, time_obj)
                 else:
                     error_msg = "I couldn't understand the end time. Event not created."
                     audio_processor.process_and_play(error_msg, speaker_sample_path, output_device, orb_controller)
@@ -516,9 +508,7 @@ def main():
             event = calendar_service.create_event(title, description, start_time, end_time)
             
             if event:
-                start_str = start_time.strftime('%I:%M %p')
-                end_str = end_time.strftime('%I:%M %p')
-                confirm_msg = f"Event '{title}' created from {start_str} to {end_str}."
+                confirm_msg = f"{title} event created successfully."
             else:
                 confirm_msg = "Ugh, something went wrong. The event wasn't created."
             
@@ -529,64 +519,102 @@ def main():
             continue
         
         # Handle list events command
-        elif m_list_events:
+        elif command == 'list_events':
             print("DEBUG: Processing 'list events' command...")
             if orb_controller:
                 orb_controller.set_state("processing")
             
-            duration_text = m_list_events.group(1).strip()
+            # Use LLM to parse duration and start date from user input
+            duration_hours, start_date_str = event_parser.parse_search_duration(user_input)
             
-            # If no duration specified, ask for it
-            if not duration_text:
-                prompt = "For how long? Tell me in days, hours, or minutes."
-                audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
-                
-                if orb_controller:
-                    orb_controller.set_state("listening")
-                
-                duration_audio = "list_duration.wav"
-                audio_processor.record_audio(duration_audio, input_device)
-                
-                if orb_controller:
-                    orb_controller.set_state("processing")
-                
-                duration_text = audio_processor.transcribe_with_whisper(duration_audio)
-                os.remove(duration_audio)
-            
-            # Parse duration with simple parser
-            duration_hours = duration_parser.parse_duration(duration_text)
-            
+            # If no duration found, ask for it
             if duration_hours is None:
-                error_msg = "I couldn't understand the duration. Try again."
-                audio_processor.process_and_play(error_msg, speaker_sample_path, output_device, orb_controller)
-                if orb_controller:
-                    orb_controller.set_state("idle")
-                continue
+                # Try simple duration parser as fallback
+                duration_hours = duration_parser.parse_duration(user_input)
+                
+                if duration_hours is None:
+                    prompt = "For how long? Tell me in days, hours, or minutes."
+                    audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
+                    
+                    if orb_controller:
+                        orb_controller.set_state("listening")
+                    
+                    duration_audio = "list_duration.wav"
+                    audio_processor.record_audio(duration_audio, input_device)
+                    
+                    if orb_controller:
+                        orb_controller.set_state("processing")
+                    
+                    duration_text = audio_processor.transcribe_with_whisper(duration_audio)
+                    os.remove(duration_audio)
+                    
+                    duration_hours = duration_parser.parse_duration(duration_text)
+                    
+                    if duration_hours is None:
+                        error_msg = "I couldn't understand the duration. Try again."
+                        audio_processor.process_and_play(error_msg, speaker_sample_path, output_device, orb_controller)
+                        if orb_controller:
+                            orb_controller.set_state("idle")
+                        continue
             
-            # Get events
-            events = calendar_service.list_events(duration_hours)
+            # Parse start date (defaults to today if None)
+            if start_date_str:
+                start_date = time_parser.parse_date_string(start_date_str)
+                if start_date is None:
+                    start_date = datetime.now().date()
+            else:
+                start_date = datetime.now().date()
+            
+            print(f"DEBUG: Listing events from {start_date} for {duration_hours} hours")
+            
+            # Create start datetime at beginning of the specified date
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            from datetime import timezone
+            start_datetime = start_datetime.replace(tzinfo=timezone.utc)
+            end_datetime = start_datetime + timedelta(hours=duration_hours)
+            
+            # Get events from calendar
+            events_result = calendar_service.service if calendar_service.service else calendar_service.authenticate()
+            events_data = calendar_service.service.events().list(
+                calendarId='primary',
+                timeMin=start_datetime.isoformat(),
+                timeMax=end_datetime.isoformat(),
+                maxResults=50,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            
+            events = events_data.get('items', [])
             
             if events:
-                summary = f"You have {len(events)} event{'s' if len(events) > 1 else ''} in the next {duration_hours} hours. "
-                
-                # List each event
-                for i, event in enumerate(events[:5], 1):
+                # Generate LLM response for events
+                event_summaries = []
+                for event in events[:10]:  # Limit to 10 events
                     event_title = event.get('summary', 'Untitled')
                     start = event['start'].get('dateTime', event['start'].get('date'))
-                    # Parse and format time
-                    from datetime import datetime
                     try:
                         start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
-                        time_str = start_dt.strftime('%I:%M %p')
+                        time_str = start_dt.strftime('%I:%M %p on %B %d')
                     except:
                         time_str = start
-                    
-                    summary += f"Event {i}: {event_title} at {time_str}. "
+                    event_summaries.append(f"{event_title} at {time_str}")
                 
-                if len(events) > 5:
-                    summary += f"And {len(events) - 5} more events."
+                # Use LLM to generate natural response
+                llm_prompt = f"""The user asked: "{user_input}"
+
+I found {len(events)} event(s):
+{chr(10).join(f"{i+1}. {summary}" for i, summary in enumerate(event_summaries))}
+
+Generate a natural, conversational response (2-3 sentences max) to answer the user's question. Be concise and friendly."""
+                
+                messages = [
+                    {"role": "system", "content": "You are a helpful assistant. Provide brief, natural responses."},
+                    {"role": "user", "content": llm_prompt}
+                ]
+                
+                summary = llm_interface.generate(messages, max_new_tokens=150, temperature=0.7)
             else:
-                summary = f"You have no events in the next {duration_hours} hours."
+                summary = f"You have no events scheduled for that time period."
             
             print(f"DEBUG: Events summary: {summary}")
             audio_processor.process_and_play(summary, speaker_sample_path, output_device, orb_controller)
@@ -596,15 +624,16 @@ def main():
             continue
         
         # Handle search event command
-        elif m_search_event:
+        elif command == 'search_event':
             print("DEBUG: Processing 'search event' command...")
             if orb_controller:
                 orb_controller.set_state("processing")
             
-            search_text = m_search_event.group(1).strip()
+            # Use full user input - will extract query from natural language
+            search_text = user_input
             
-            # If no search query, ask for it
-            if not search_text:
+            # Basic check if input seems too short
+            if len(search_text.strip()) < 5:
                 prompt = "What event are you looking for?"
                 audio_processor.process_and_play(prompt, speaker_sample_path, output_device, orb_controller)
                 
@@ -633,39 +662,55 @@ def main():
                 start_date_str = datetime.now().strftime('%d-%m-%Y')
                 print(f"DEBUG: No start date in search query, defaulting to today: {start_date_str}")
             
-            # Extract search keywords (remove time-related words)
-            search_query = re.sub(r'\b(today|tomorrow|yesterday|next|this|week|day|hour|minute|on|at)\b', '', search_text, flags=re.IGNORECASE)
+            # Get extracted content from classifier (the search query without command keywords)
+            search_query = parameters.get('content', search_text)
+            
+            # Clean up the search query further if needed
+            search_query = re.sub(r'\b(today|tomorrow|yesterday|next|this|week|day|hour|minute|on|at|in|calendar)\b', '', search_query, flags=re.IGNORECASE)
             search_query = search_query.strip()
             
-            if not search_query:
+            if not search_query or len(search_query) < 2:
                 search_query = search_text
             
             print(f"DEBUG: Searching events for '{search_query}' starting from {start_date_str} for {duration_hours} hours")
             
-            # Search events
-            events = calendar_service.search_events(duration_hours, search_query, start_date_str)
+            # Search events using RAG similarity (60% threshold)
+            events = calendar_service.search_events(duration_hours, search_query, start_date_str, similarity_threshold=0.6)
             
             if events:
-                summary = f"Found {len(events)} event{'s' if len(events) > 1 else ''} about {search_query}. "
-                
-                # Mention top 3 events
-                for i, event in enumerate(events[:3], 1):
+                # Generate LLM response with event details
+                event_summaries = []
+                for event in events[:5]:  # Limit to top 5
                     event_title = event.get('summary', 'Untitled')
+                    event_desc = event.get('description', '')
                     start = event['start'].get('dateTime', event['start'].get('date'))
-                    # Parse and format time
-                    from datetime import datetime
                     try:
                         start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
-                        time_str = start_dt.strftime('%I:%M %p')
+                        time_str = start_dt.strftime('%I:%M %p on %B %d')
                     except:
                         time_str = start
                     
-                    summary += f"Event {i}: {event_title} at {time_str}. "
+                    event_info = f"{event_title} at {time_str}"
+                    if event_desc:
+                        event_info += f" - {event_desc[:50]}"
+                    event_summaries.append(event_info)
                 
-                if len(events) > 3:
-                    summary += f"And {len(events) - 3} more."
+                # Use LLM to generate natural response
+                llm_prompt = f"""The user asked: "{user_input}"
+
+I found {len(events)} matching event(s):
+{chr(10).join(f"{i+1}. {summary}" for i, summary in enumerate(event_summaries))}
+
+Generate a natural, conversational response (2-3 sentences max) to answer the user's question. Be concise and friendly."""
+                
+                messages = [
+                    {"role": "system", "content": "You are a helpful assistant. Provide brief, natural responses."},
+                    {"role": "user", "content": llm_prompt}
+                ]
+                
+                summary = llm_interface.generate(messages, max_new_tokens=150, temperature=0.7)
             else:
-                summary = f"I didn't find any events about {search_query}."
+                summary = f"I didn't find any events matching '{search_query}' for that time period."
             
             print(f"DEBUG: Event search summary: {summary}")
             audio_processor.process_and_play(summary, speaker_sample_path, output_device, orb_controller)
@@ -675,12 +720,13 @@ def main():
             continue
         
         # Handle create note command
-        elif m_create_note:
+        elif command == 'create_note':
             print("DEBUG: Processing 'create note' command...")
             if orb_controller:
                 orb_controller.set_state("processing")
                 
-            note_part = m_create_note.group(1).strip()
+            # Use full user input - LLM parser handles natural language
+            note_part = user_input
             # Note: llm_tokenizer and llm_model can be None if using API
             parsed_notes = note_manager.parse_note_creation(note_part, llm_tokenizer, llm_model)
             title = parsed_notes['Title']
@@ -734,42 +780,69 @@ def main():
             continue
             
         # Handle delete note command
-        elif user_input_lower.startswith("delete note"):
+        elif command == 'delete_note':
             print("DEBUG: Processing 'delete note' command...")
             if orb_controller:
                 orb_controller.set_state("processing")
                 
-            title = user_input.split("delete note", 1)[1].strip()
+            # Use full user input - extract title from natural language
+            # For now, try to extract the title part
+            title_match = re.search(r'(?:delete|remove|erase)\s+(?:note|the note)\s+(.+)', user_input, flags=re.IGNORECASE)
+            if title_match:
+                title = title_match.group(1).strip()
+            else:
+                # Fallback: use everything after common delete keywords
+                title = re.sub(r'^.*?(?:delete|remove|erase)\s+', '', user_input, flags=re.IGNORECASE).strip()
             note_manager.manage_note("delete", title, None)
             
             if orb_controller:
                 orb_controller.set_state("idle")
             continue
 
-        # Process normal query with RAG and LLM
-        print("DEBUG: Processing normal query with RAG and LLM...")
-        if orb_controller:
-            orb_controller.set_state("processing")
+        # Handle conversation (normal query with RAG and LLM)
+        elif command == 'conversation':
+            print("DEBUG: Processing conversation with RAG and LLM...")
+            if orb_controller:
+                orb_controller.set_state("processing")
             
-        conversation_history.append({"role": "user", "content": user_input})
-        print(PINK + f"{bot_name}: " + RESET_COLOR)
-        
-        chat_response = rag_llm_processor.chatgpt_streamed(user_input, system_message, conversation_history, bot_name, threshold=0.50)
-        conversation_history.append({"role": "assistant", "content": chat_response})
-        
-        # Set to talking state during TTS
-        # if orb_controller:
-        #     orb_controller.set_state("talking")
-
-        audio_processor.process_and_play(chat_response, speaker_sample_path, output_device, orb_controller)
-
-        # Return to idle
-        if orb_controller:
-            orb_controller.set_state("idle")
+            conversation_history.append({"role": "user", "content": user_input})
+            print(PINK + f"{bot_name}: " + RESET_COLOR)
             
-        # Keep only the last 20 messages for context
-        conversation_history = conversation_history[-20:]
-        print("DEBUG: Conversation history trimmed to last 20 messages.")
+            chat_response = rag_llm_processor.chatgpt_streamed(user_input, system_message, conversation_history, bot_name, threshold=0.50)
+            conversation_history.append({"role": "assistant", "content": chat_response})
+            
+            # Set to talking state during TTS
+            # if orb_controller:
+            #     orb_controller.set_state("talking")
+
+            audio_processor.process_and_play(chat_response, speaker_sample_path, output_device, orb_controller)
+
+            # Return to idle
+            if orb_controller:
+                orb_controller.set_state("idle")
+                
+            # Keep only the last 20 messages for context
+            conversation_history = conversation_history[-20:]
+            print("DEBUG: Conversation history trimmed to last 20 messages.")
+        
+        # Unknown command - treat as conversation
+        else:
+            print(f"DEBUG: Unknown command '{command}', treating as conversation...")
+            if orb_controller:
+                orb_controller.set_state("processing")
+            
+            conversation_history.append({"role": "user", "content": user_input})
+            print(PINK + f"{bot_name}: " + RESET_COLOR)
+            
+            chat_response = rag_llm_processor.chatgpt_streamed(user_input, system_message, conversation_history, bot_name, threshold=0.50)
+            conversation_history.append({"role": "assistant", "content": chat_response})
+            
+            audio_processor.process_and_play(chat_response, speaker_sample_path, output_device, orb_controller)
+
+            if orb_controller:
+                orb_controller.set_state("idle")
+                
+            conversation_history = conversation_history[-20:]
     
     # Cleanup
     print("DEBUG: Shutting down...")

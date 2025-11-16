@@ -54,10 +54,12 @@
 # ratio = difflib.SequenceMatcher(None, prefix, cmd_clean).ratio()
 # print(ratio)
 
-import requests, time
-url = "http://localhost:11434/v1/chat/completions"
-payload = {"model":"llama3.2:3b","messages":[{"role":"user","content":"ping"}],"max_tokens":10}
-start = time.time()
-r = requests.post(url, json=payload, headers={"Authorization":"Bearer ollama"}, timeout=20)
-print("status", r.status_code, "time", time.time()-start)
-print(r.text[:1000])
+# import requests, time
+# url = "http://localhost:11434/v1/chat/completions"
+# payload = {"model":"llama3.2:3b","messages":[{"role":"user","content":"ping"}],"max_tokens":10}
+# start = time.time()
+# r = requests.post(url, json=payload, headers={"Authorization":"Bearer ollama"}, timeout=20)
+# print("status", r.status_code, "time", time.time()-start)
+# print(r.text[:1000])
+from datetime import datetime
+print(datetime.now().strftime('%d-%m-%Y'))

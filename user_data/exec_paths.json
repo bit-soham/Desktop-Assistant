@@ -1,0 +1,184 @@
+{
+  "office": "C:\\Program Files\\Microsoft Office\\root\\Office16\\",
+  "system32": "C:\\WINDOWS\\system32\\",
+
+  "word": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+  "excel": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+  "powerpoint": "C:\\Program Files\\Microsoft Office\\root\\Office16\\POWERPNT.EXE",
+  "onenote": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTEM.EXE",
+  "uri_handler": "C:\\Program Files\\Microsoft Office\\root\\Office16\\protocolhandler.exe",
+
+  "cmd": "C:\\WINDOWS\\system32\\cmd.exe",
+  "powershell": "C:\\WINDOWS\\system32\\powershell.exe",
+  "cleanmgr": "C:\\WINDOWS\\system32\\cleanmgr.exe",
+  "defrag": "C:\\WINDOWS\\system32\\dfrgui.exe",
+  "powercfg": "C:\\WINDOWS\\system32\\powercfg.exe",
+  "diskpart": "C:\\WINDOWS\\system32\\diskpart.exe",
+  "notepad": "C:\\WINDOWS\\system32\\notepad.exe",
+
+  "whatsapp": [
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\WhatsApp\\WhatsApp.exe",
+    "C:\\Program Files\\WhatsApp\\WhatsApp.exe",
+    "C:\\Program Files (x86)\\WhatsApp\\WhatsApp.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Programs\\WhatsApp\\WhatsApp.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Programs\\WhatsApp Beta\\WhatsApp.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Roaming\\WhatsApp\\WhatsApp.exe",
+    "C:\\Program Files\\WindowsApps\\Microsoft.WhatsApp_*\\WhatsApp.exe",
+    "C:\\Program Files\\WindowsApps\\Microsoft.WhatsApp_*\\WhatsAppDesktop.exe"
+  ],
+
+  "zoom": [
+    "C:\\Users\\%USERNAME%\\AppData\\Roaming\\Zoom\\bin\\Zoom.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Zoom\\bin\\Zoom.exe",
+    "C:\\Program Files\\Zoom\\bin\\Zoom.exe",
+    "C:\\Program Files (x86)\\Zoom\\bin\\Zoom.exe"
+  ],
+
+  "chrome": [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+  ],
+
+  "firefox": [
+    "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+    "C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe"
+  ],
+
+  "edge": [
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+  ],
+
+  "opera": [
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Programs\\Opera\\opera.exe",
+    "C:\\Program Files\\Opera\\opera.exe"
+  ],
+
+  "brave": [
+    "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+  ],
+
+  "vlc": [
+    "C:\\Program Files\\VideoLAN\\VLC\\vlc.exe",
+    "C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe"
+  ],
+
+  "spotify": [
+    "C:\\Users\\%USERNAME%\\AppData\\Roaming\\Spotify\\Spotify.exe"
+  ],
+
+  "discord": [
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Discord\\app-*/Discord.exe"
+  ],
+
+  "telegram": [
+    "C:\\Users\\%USERNAME%\\AppData\\Roaming\\Telegram Desktop\\Telegram.exe"
+  ],
+
+  "steam": [
+    "C:\\Program Files (x86)\\Steam\\steam.exe",
+    "C:\\Program Files\\Steam\\steam.exe"
+  ],
+
+  "epic_games": [
+    "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe",
+    "C:\\Program Files\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe"
+  ],
+
+  "riot_client": [
+    "C:\\Riot Games\\Riot Client\\RiotClientServices.exe"
+  ],
+
+  "obs": [
+    "C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe"
+  ],
+
+  "notepad_plus": [
+    "C:\\Program Files\\Notepad++\\notepad++.exe"
+  ],
+
+  "git_gui": [
+    "C:\\Program Files\\Git\\cmd\\git-gui.exe"
+  ],
+
+  "github_desktop": [
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\GitHubDesktop\\GitHubDesktop.exe"
+  ],
+
+  "vscode": [
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+    "C:\\Program Files\\Microsoft VS Code\\Code.exe"
+  ],
+
+  "sublime_text": [
+    "C:\\Program Files\\Sublime Text\\sublime_text.exe"
+  ],
+
+  "android_studio": [
+    "C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe",
+    "C:\\Program Files (x86)\\Android\\Android Studio\\bin\\studio64.exe"
+  ],
+
+  "pycharm": [
+    "C:\\Program Files\\JetBrains\\PyCharm Community Edition *\\bin\\pycharm64.exe",
+    "C:\\Program Files\\JetBrains\\PyCharm *\\bin\\pycharm64.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\JetBrains\\PyCharm*\\bin\\pycharm64.exe"
+  ],
+
+  "intellij": [
+    "C:\\Program Files\\JetBrains\\IntelliJ IDEA Community Edition *\\bin\\idea64.exe",
+    "C:\\Program Files\\JetBrains\\IntelliJ IDEA *\\bin\\idea64.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\JetBrains\\IntelliJIdea*\\bin\\idea64.exe"
+  ],
+
+  "webstorm": [
+    "C:\\Program Files\\JetBrains\\WebStorm *\\bin\\webstorm64.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\JetBrains\\WebStorm*\\bin\\webstorm64.exe"
+  ],
+
+  "clion": [
+    "C:\\Program Files\\JetBrains\\CLion *\\bin\\clion64.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\JetBrains\\CLion*\\bin\\clion64.exe"
+  ],
+
+  "rider": [
+    "C:\\Program Files\\JetBrains\\Rider *\\bin\\rider64.exe",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\JetBrains\\Rider*\\bin\\rider64.exe"
+  ],
+
+  "postman": [
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Postman\\Postman.exe"
+  ],
+
+  "docker_desktop": [
+    "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
+  ],
+
+  "mysql_workbench": [
+    "C:\\Program Files\\MySQL\\MySQL Workbench 8.0 CE\\MySQLWorkbench.exe"
+  ],
+
+  "mongodb_compass": [
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\MongoDBCompass\\MongoDBCompass.exe"
+  ],
+
+  "unity_hub": [
+    "C:\\Program Files\\Unity Hub\\Unity Hub.exe"
+  ],
+
+  "unreal_engine": [
+    "C:\\Program Files\\Epic Games\\Launcher\\Engine\\Binaries\\Win64\\EpicGamesLauncher.exe"
+  ],
+
+  "blender": [
+    "C:\\Program Files\\Blender Foundation\\Blender\\blender.exe"
+  ],
+
+  "gimp": [
+    "C:\\Program Files\\GIMP 2\\bin\\gimp-2.10.exe"
+  ],
+
+  "davinci_resolve": [
+    "C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\Resolve.exe"
+  ]
+}
