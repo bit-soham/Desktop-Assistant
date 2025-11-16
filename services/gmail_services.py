@@ -243,28 +243,120 @@ class GmailService:
         
         return body
     
-    def search_emails_for_content(self, emails, search_query):
+    def search_emails_for_content(self, emails, search_query, similarity_threshold=0.6):
         """
-        Search through emails for specific content.
+        Search through emails for specific content using similarity search.
         
         Args:
             emails: List of email dictionaries
             search_query: What to search for
+            similarity_threshold: Minimum similarity score (0.0 to 1.0), default 0.6
             
         Returns:
-            list: Filtered emails that match the query
+            list: Filtered emails that match the query, sorted by similarity
         """
-        search_query_lower = search_query.lower()
-        matching_emails = []
+        try:
+            from sentence_transformers import SentenceTransformer, util
+        except ImportError:
+            print(f"{YELLOW}WARNING: sentence-transformers not installed. Using simple text search.{RESET_COLOR}")
+            # Fallback to simple search
+            search_query_lower = search_query.lower()
+            matching_emails = []
+            for email in emails:
+                if (search_query_lower in email['subject'].lower() or
+                    search_query_lower in email['body'].lower() or
+                    search_query_lower in email['snippet'].lower()):
+                    matching_emails.append(email)
+            return matching_emails
         
+        # Load embedding model
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Encode the query
+        query_embedding = model.encode(search_query, convert_to_tensor=True)
+        
+        # Calculate similarity for each email
+        email_scores = []
         for email in emails:
-            # Search in subject, body, and snippet
-            if (search_query_lower in email['subject'].lower() or
-                search_query_lower in email['body'].lower() or
-                search_query_lower in email['snippet'].lower()):
-                matching_emails.append(email)
+            # Combine subject, snippet, and body for matching
+            email_text = f"{email['subject']} {email['snippet']} {email['body'][:500]}".strip()
+            
+            if not email_text:
+                continue
+            
+            # Encode email text
+            email_embedding = model.encode(email_text, convert_to_tensor=True)
+            
+            # Calculate cosine similarity
+            similarity = util.cos_sim(query_embedding, email_embedding).item()
+            
+            if similarity >= similarity_threshold:
+                email_scores.append((email, similarity))
+        
+        # Sort by similarity (highest first)
+        email_scores.sort(key=lambda x: x[1], reverse=True)
+        matching_emails = [email for email, score in email_scores]
+        
+        print(f"DEBUG: Found {len(matching_emails)} emails with similarity >= {similarity_threshold*100:.0f}%")
+        for email, score in email_scores[:3]:  # Show top 3 scores
+            print(f"  - {email['subject'][:50]}: {score*100:.1f}% similarity")
         
         return matching_emails
+    
+    def generate_email_summary(self, llm_interface, emails, user_query):
+        """
+        Generate natural language summary of emails using LLM.
+        
+        Args:
+            llm_interface: LLMInterface instance
+            emails: List of matching email dictionaries
+            user_query: Original user query
+            
+        Returns:
+            str: Natural language summary
+        """
+        if not emails:
+            return f"I didn't find any emails about {user_query} in your last 50 messages."
+        
+        # Prepare email data for LLM
+        email_summaries = []
+        for i, email in enumerate(emails[:5], 1):  # Limit to top 5
+            sender = email['from'].split('<')[0].strip()
+            email_summaries.append(
+                f"Email {i}:\n  From: {sender}\n  Subject: {email['subject']}\n  Preview: {email['snippet'][:100]}"
+            )
+        
+        emails_text = "\n\n".join(email_summaries)
+        
+        system_prompt = f"""You are a helpful email assistant. The user asked: "{user_query}"
+
+Based on the matching emails below, provide a natural, conversational summary.
+Mention the number of emails found, key senders, and relevant subjects.
+Keep the response concise (2-3 sentences).
+
+Matching Emails:
+{emails_text}
+
+Provide a brief summary:"""
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_query}
+        ]
+        
+        try:
+            response = llm_interface.generate(messages, max_new_tokens=200, temperature=0.5)
+            return response.strip()
+        except Exception as e:
+            print(f"{YELLOW}WARNING: LLM summary failed: {e}{RESET_COLOR}")
+            # Fallback to simple summary
+            summary = f"Found {len(emails)} email{'s' if len(emails) > 1 else ''} about {user_query}. "
+            for i, email in enumerate(emails[:3]):
+                sender = email['from'].split('<')[0].strip()
+                summary += f"Email {i+1}: From {sender}, subject: {email['subject']}. "
+            if len(emails) > 3:
+                summary += f"And {len(emails) - 3} more."
+            return summary
 
 
 class EmailParser:

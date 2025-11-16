@@ -84,18 +84,45 @@ class CalendarService:
             self.authenticate()
         
         try:
+            # Validate that start_time and end_time are provided
+            if start_time is None:
+                print(f"{YELLOW}ERROR: Start time is required{RESET_COLOR}")
+                return None
+            
+            if end_time is None:
+                print(f"{YELLOW}ERROR: End time is required{RESET_COLOR}")
+                return None
+            
+            # Validate that end_time is after start_time
+            if end_time <= start_time:
+                print(f"{YELLOW}ERROR: End time must be after start time{RESET_COLOR}")
+                print(f"{YELLOW}Start: {start_time}, End: {end_time}{RESET_COLOR}")
+                return None
+            
+            # Convert timezone-naive datetimes to UTC
+            if start_time.tzinfo is None:
+                # Assume local time, convert to UTC
+                from datetime import timezone
+                start_time = start_time.replace(tzinfo=timezone.utc)
+            
+            if end_time.tzinfo is None:
+                from datetime import timezone
+                end_time = end_time.replace(tzinfo=timezone.utc)
+            
             event = {
                 'summary': title,
                 'description': description,
                 'start': {
-                    'dateTime': start_time.isoformat() + 'Z' if start_time.tzinfo is None else start_time.isoformat(),
+                    'dateTime': start_time.isoformat(),
                     'timeZone': 'UTC',
                 },
                 'end': {
-                    'dateTime': end_time.isoformat() + 'Z' if end_time.tzinfo is None else end_time.isoformat(),
+                    'dateTime': end_time.isoformat(),
                     'timeZone': 'UTC',
                 },
             }
+            
+            print(f"DEBUG: Creating event with start={start_time.isoformat()}, end={end_time.isoformat()}")
             
             created_event = self.service.events().insert(
                 calendarId='primary', body=event).execute()
@@ -108,6 +135,8 @@ class CalendarService:
             return None
         except Exception as e:
             print(f"{YELLOW}ERROR: Unexpected error creating event: {e}{RESET_COLOR}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def list_events(self, duration_hours):
@@ -153,13 +182,14 @@ class CalendarService:
             print(f"{YELLOW}ERROR: Unexpected error listing events: {e}{RESET_COLOR}")
             return []
     
-    def search_events(self, duration_hours, query, similarity_threshold=0.6):
+    def search_events(self, duration_hours, query, start_date_str=None, similarity_threshold=0.4):
         """
         Search for events matching a query within a duration using similarity search.
         
         Args:
-            duration_hours: Duration to search in hours from now
+            duration_hours: Duration to search in hours from start date
             query: Search query string
+            start_date_str: Start date in DD-MM-YYYY format or None (defaults to today)
             similarity_threshold: Minimum similarity score (0.0 to 1.0), default 0.6
             
         Returns:
@@ -169,14 +199,33 @@ class CalendarService:
             self.authenticate()
         
         try:
-            # Get all events in the time range
-            now = datetime.utcnow()
-            time_max = now + timedelta(hours=duration_hours)
+            # Parse start date or use today
+            if start_date_str:
+                time_parser = TimeParser()
+                start_date = time_parser.parse_date_string(start_date_str)
+                if start_date is None:
+                    print(f"{YELLOW}WARNING: Could not parse start date '{start_date_str}', using today{RESET_COLOR}")
+                    start_date = datetime.utcnow().date()
+            else:
+                start_date = datetime.utcnow().date()
+                print(f"DEBUG: No start date provided, using today: {start_date}")
             
+            # Create start datetime at beginning of day (00:00)
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            # Make it UTC-aware
+            from datetime import timezone
+            start_datetime = start_datetime.replace(tzinfo=timezone.utc)
+            
+            # Calculate end datetime
+            end_datetime = start_datetime + timedelta(hours=duration_hours)
+            
+            print(f"DEBUG: Searching events from {start_datetime.isoformat()} to {end_datetime.isoformat()}")
+            
+            # Get all events in the time range
             events_result = self.service.events().list(
                 calendarId='primary',
-                timeMin=now.isoformat() + 'Z',
-                timeMax=time_max.isoformat() + 'Z',
+                timeMin=start_datetime.isoformat(),
+                timeMax=end_datetime.isoformat(),
                 maxResults=50,
                 singleEvents=True,
                 orderBy='startTime'
@@ -324,7 +373,7 @@ class TimeParser:
     @staticmethod
     def parse_time_string(time_str):
         """
-        Parse time string like '3pm', '14:30', '3:30 PM', etc.
+        Parse time string like '3pm', '14:30', '3:30 PM', 'HH:MM', etc.
         
         Args:
             time_str: Time string
@@ -336,6 +385,7 @@ class TimeParser:
         
         # Try different time formats
         time_formats = [
+            r'(\d{1,2}):(\d{2})',  # HH:MM or H:MM (24-hour format, priority)
             r'(\d{1,2})\s*(?::|\.)\s*(\d{2})\s*(am|pm)?',  # 3:30 PM, 14:30
             r'(\d{1,2})\s*(am|pm)',  # 3pm, 3 PM
         ]
@@ -346,9 +396,9 @@ class TimeParser:
                 groups = match.groups()
                 hour = int(groups[0])
                 minute = int(groups[1]) if len(groups) > 1 and groups[1] and groups[1].isdigit() else 0
-                meridiem = groups[-1] if len(groups) > 0 and groups[-1] in ['am', 'pm'] else None
+                meridiem = groups[-1] if len(groups) > 2 and groups[-1] in ['am', 'pm'] else None
                 
-                # Convert to 24-hour format
+                # Convert to 24-hour format if meridiem present
                 if meridiem == 'pm' and hour != 12:
                     hour += 12
                 elif meridiem == 'am' and hour == 12:
@@ -365,7 +415,7 @@ class TimeParser:
     @staticmethod
     def parse_date_string(date_str):
         """
-        Parse date string like 'today', 'tomorrow', '2025-11-20', etc.
+        Parse date string like 'today', 'tomorrow', '2025-11-20', 'DD-MM-YYYY', etc.
         
         Args:
             date_str: Date string
@@ -385,6 +435,7 @@ class TimeParser:
         
         # Try to parse date formats
         date_formats = [
+            '%d-%m-%Y',  # DD-MM-YYYY (priority for LLM output)
             '%Y-%m-%d',
             '%m/%d/%Y',
             '%d/%m/%Y',
@@ -418,7 +469,6 @@ class EventParser:
         self.llm_interface = llm_interface
     
     def parse_event_creation(self, user_input):
-        # !TODO start and end time should be in 24 hours and minutes format
         """
         Parse event creation command using LLM.
         
@@ -432,34 +482,30 @@ class EventParser:
         
         # Get current date for context
         today = datetime.now()
-        today_str = datetime.now().strftime('%d-%m-%Y')  # e.g., "Saturday, November 16, 2025"
+        today_str = datetime.now().strftime('%d-%m-%Y')  # e.g., "16-11-2025"
         
         system_prompt = f"""You are an event parser. Today is {today_str}.
 Extract the event title, description/content, date, start time, and end time from the user's input.
-Dates can be "today", "tomorrow", specific dates like "November 20", "2025-11-20", etc.
-Times should be in format like "3pm", "14:30", "3:30 PM", etc.
+Dates should be in DD-MM-YYYY format. If user says "today" use {today_str}, "tomorrow" use next day, etc.
+Times MUST be in 24-hour format HH:MM (e.g., "14:30", "09:00", "18:45").
+Convert any AM/PM times to 24-hour format: 3pm = "15:00", 10am = "10:00", etc.
 If date, start time, or end time is not mentioned, set them to null.
+
 Return ONLY a valid JSON object with this exact format:
-
-Output requirements (CRITICAL):
-- Output **ONLY** a single valid JSON object (no surrounding text, no explanation, no backticks, no code fences).
-- This should be the JSON format: {{"title": "event title", "description": "event description", "date": "DD-MM-YYYY", "start_time": "time_string_or_null", "end_time": "time_string_or_null"}}
-- Use ISO formatting for no special tokens.
-- Output date only in the format "DD-MM-YYYY".
-
+{{"title": "event title", "description": "event description", "date": "DD-MM-YYYY", "start_time": "HH:MM", "end_time": "HH:MM"}}
 
 Examples:
 Input: "meeting with team from 2pm to 4pm about project updates"
-Output: {{"title": "Meeting with Team", "description": "Discuss project updates", "date": "16-11-2025", "start_time": "2pm", "end_time": "4pm"}}
+Output: {{"title": "Meeting with Team", "description": "Discuss project updates", "date": "{today_str}", "start_time": "14:00", "end_time": "16:00"}}
 
 Input: "doctor appointment tomorrow at 3pm for 1 hour"
-Output: {{"title": "Doctor Appointment", "description": "Doctor appointment", "date": "17-11-2025", "start_time": "3pm", "end_time": "4pm"}}
+Output: {{"title": "Doctor Appointment", "description": "Doctor appointment", "date": "{(today + timedelta(days=1)).strftime('%d-%m-%Y')}", "start_time": "15:00", "end_time": "16:00"}}
 
 Input: "lunch with john on November 20 from 12:30 to 1:30"
-Output: {{"title": "Lunch with John", "description": "Lunch meeting", "date": "20-11-2025", "start_time": "12:30", "end_time": "1:30"}}
+Output: {{"title": "Lunch with John", "description": "Lunch meeting", "date": "20-11-2025", "start_time": "12:30", "end_time": "13:30"}}
 
 Input: "team standup at 10am"
-Output: {{"title": "Team Standup", "description": "Daily standup meeting", "date": "16-11-2025", "start_time": "10am", "end_time": null}}"""
+Output: {{"title": "Team Standup", "description": "Daily standup meeting", "date": "{today_str}", "start_time": "10:00", "end_time": null}}"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -509,7 +555,7 @@ Output: {{"title": "Team Standup", "description": "Daily standup meeting", "date
     
     def parse_search_duration(self, user_input):
         """
-        Parse duration and start time from search query using LLM.
+        Parse duration and start date from search query using LLM.
         
         Args:
             user_input: User's search query
@@ -517,42 +563,38 @@ Output: {{"title": "Team Standup", "description": "Daily standup meeting", "date
         Returns:
             tuple: (duration_hours, start_date_str) or (None, None) if parsing failed
                    duration_hours: float or None
-                   start_date_str: str like "today", "tomorrow", "2025-11-20" or None
+                   start_date_str: str in DD-MM-YYYY format or None
         """
-        
-        # !TODO it should also return start time if specified else 00:00
         print(f"DEBUG: Parsing search duration and start: {user_input[:50]}...")
         
         # Get current date for context
-
-        today_str = datetime.now().strftime('%d-%m-%Y')
+        today = datetime.now()
+        today_str = today.strftime('%d-%m-%Y')
+        tomorrow_str = (today + timedelta(days=1)).strftime('%d-%m-%Y')
+        yesterday_str = (today - timedelta(days=1)).strftime('%d-%m-%Y')
         
         system_prompt = f"""You are a time parser. Today is {today_str}.
 Extract the time duration and start date from the search query.
 Convert duration to hours.
-Start date can be "today", "tomorrow", "yesterday", specific dates like "November 20", "2025-11-20", etc.
+Start date MUST be in DD-MM-YYYY format.
+If user says "today" use {today_str}, "tomorrow" use {tomorrow_str}, "yesterday" use {yesterday_str}.
 If not mentioned, use null.
 
-
-Output requirements (CRITICAL):
-- Output **ONLY** a single valid JSON object (no surrounding text, no explanation, no backticks, no code fences).
-- This should be the JSON format: {{"duration": hours_as_number_or_null, "start_date": "dd-mm-yyyy_or_null"}}
-- Use ISO formatting for no special tokens.
-- Output date only in the format "DD-MM-YYYY".
-
+Return ONLY a valid JSON object:
+{{"duration": hours_as_number_or_null, "start_date": "DD-MM-YYYY_or_null"}}
 
 Examples:
 Input: "do I have any meetings today"
-Output: {{"duration": 24, "start_date": "16-11-2025"}}
+Output: {{"duration": 24, "start_date": "{today_str}"}}
 
-Input: "what's is important my calendar for the next 3 hours"
-Output: {{"duration": 3, "start_date": "16-11-2025"}}
+Input: "what's on my calendar for the next 3 hours"
+Output: {{"duration": 3, "start_date": "{today_str}"}}
 
 Input: "any events tomorrow"
-Output: {{"duration": 24, "start_date": "17-11-2025"}}
+Output: {{"duration": 24, "start_date": "{tomorrow_str}"}}
 
 Input: "meetings this week"
-Output: {{"duration": 168, "start_date": "16-11-2025"}}
+Output: {{"duration": 168, "start_date": "{today_str}"}}
 
 Input: "events on November 20"
 Output: {{"duration": 24, "start_date": "20-11-2025"}}
@@ -561,7 +603,7 @@ Input: "do I have any appointments"
 Output: {{"duration": null, "start_date": null}}
 
 Input: "meetings yesterday"
-Output: {{"duration": 24, "start_date": "15-11-2025"}}"""
+Output: {{"duration": 24, "start_date": "{yesterday_str}"}}"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -587,6 +629,11 @@ Output: {{"duration": 24, "start_date": "15-11-2025"}}"""
             parsed = json.loads(response)
             duration = parsed.get('duration')
             start_date = parsed.get('start_date')
+            
+        
+            if start_date is None:
+                start_date = today_str
+                print(f"DEBUG: Start date was null, setting to today ({today_str})")
             
             print(f"DEBUG: Parsed duration={duration} hours, start_date={start_date}")
             return (duration, start_date)

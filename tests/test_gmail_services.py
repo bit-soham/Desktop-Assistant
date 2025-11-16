@@ -3,6 +3,11 @@ Test Gmail Services
 Tests email parsing and Gmail API integration
 """
 
+import sys
+import os
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from services.gmail_services import GmailService, EmailParser
 from models.llm_interface import create_llm_interface
 

@@ -209,70 +209,105 @@ def main():
                 if email_address:
                     # Found a match (exact or fuzzy)
                     if similarity < 1.0:
-                        # Fuzzy match - ask for confirmation
-                        confirm_prompt = f"Did you mean {matched_name}? Their email is {email_address}."
-                        print(f"DEBUG: Fuzzy match found - {matched_name} (similarity: {similarity:.2%})")
-                        audio_processor.process_and_play(confirm_prompt, speaker_sample_path, output_device, orb_controller)
+                        # Fuzzy match - ask for terminal confirmation (y/n)
+                        print(f"\n{CYAN}Fuzzy match found: {matched_name} (similarity: {similarity:.2%}){RESET_COLOR}")
+                        print(f"{CYAN}Email: {email_address}{RESET_COLOR}")
+                        terminal_confirm = input(f"Did you mean {matched_name}? (y/n): ").strip().lower()
+                        
+                        if terminal_confirm not in ['y', 'yes']:
+                            # User rejected - ask for email address or name
+                            print(f"{YELLOW}Please provide the correct email address or name:{RESET_COLOR}")
+                            
+                            while True:
+                                ask_email = f"What's the email address or name for {to_recipient}?"
+                                audio_processor.process_and_play(ask_email, speaker_sample_path, output_device, orb_controller)
+                                
+                                if orb_controller:
+                                    orb_controller.set_state("listening")
+                                
+                                email_audio = "email_address.wav"
+                                audio_processor.record_audio(email_audio, input_device)
+                                
+                                if orb_controller:
+                                    orb_controller.set_state("processing")
+                                
+                                email_input = audio_processor.transcribe_with_whisper(email_audio)
+                                os.remove(email_audio)
+                                
+                                # Check if it's an email or name
+                                if '@' in email_input:
+                                    # It's an email address
+                                    email_address = email_input.strip().replace(' ', '').lower()
+                                    # Save contact
+                                    gmail_service.add_contact(to_recipient, email_address)
+                                    break
+                                else:
+                                    # It's a name - try to find it again
+                                    retry_result = gmail_service.get_email_from_name(email_input, threshold=0.9)
+                                    retry_email, retry_name, retry_sim = retry_result
+                                    
+                                    if retry_email:
+                                        if retry_sim < 1.0:
+                                            # Another fuzzy match
+                                            print(f"\n{CYAN}Found: {retry_name} (similarity: {retry_sim:.2%}){RESET_COLOR}")
+                                            print(f"{CYAN}Email: {retry_email}{RESET_COLOR}")
+                                            retry_confirm = input(f"Did you mean {retry_name}? (y/n): ").strip().lower()
+                                            
+                                            if retry_confirm in ['y', 'yes']:
+                                                email_address = retry_email
+                                                break
+                                        else:
+                                            # Exact match
+                                            email_address = retry_email
+                                            break
+                        # else: user confirmed, use email_address
+                    # else: exact match, use email_address
+                else:
+                    # No match found - ask for email address or name
+                    print(f"{YELLOW}No contact found for '{to_recipient}'{RESET_COLOR}")
+                    
+                    while True:
+                        ask_email = f"I don't have an email for {to_recipient}. What's their email address or name?"
+                        audio_processor.process_and_play(ask_email, speaker_sample_path, output_device, orb_controller)
                         
                         if orb_controller:
                             orb_controller.set_state("listening")
                         
-                        confirm_audio = "confirm_contact.wav"
-                        audio_processor.record_audio(confirm_audio, input_device)
+                        email_audio = "email_address.wav"
+                        audio_processor.record_audio(email_audio, input_device)
                         
                         if orb_controller:
                             orb_controller.set_state("processing")
                         
-                        confirmation = audio_processor.transcribe_with_whisper(confirm_audio)
-                        os.remove(confirm_audio)
+                        email_input = audio_processor.transcribe_with_whisper(email_audio)
+                        os.remove(email_audio)
                         
-                        # Check if user confirmed
-                        if confirmation.lower().strip() not in ['yes', 'yeah', 'yep', 'correct', 'right', 'yup']:
-                            # User rejected - ask for email address
-                            ask_email = f"Okay, what's the email address for {to_recipient}?"
-                            audio_processor.process_and_play(ask_email, speaker_sample_path, output_device, orb_controller)
-                            
-                            if orb_controller:
-                                orb_controller.set_state("listening")
-                            
-                            email_audio = "email_address.wav"
-                            audio_processor.record_audio(email_audio, input_device)
-                            
-                            if orb_controller:
-                                orb_controller.set_state("processing")
-                            
-                            email_address = audio_processor.transcribe_with_whisper(email_audio)
-                            os.remove(email_audio)
-                            
-                            # Clean up transcription
-                            email_address = email_address.strip().replace(' ', '').lower()
-                            
-                            # Save contact for future use
+                        # Check if it's an email or name
+                        if '@' in email_input:
+                            # It's an email address
+                            email_address = email_input.strip().replace(' ', '').lower()
+                            # Save contact
                             gmail_service.add_contact(to_recipient, email_address)
-                        # else: use the matched email_address
-                    # else: exact match, use email_address
-                else:
-                    # No match found - ask for email address
-                    ask_email = f"I don't have an email for {to_recipient}. What's their email address?"
-                    audio_processor.process_and_play(ask_email, speaker_sample_path, output_device, orb_controller)
-                    
-                    if orb_controller:
-                        orb_controller.set_state("listening")
-                    
-                    email_audio = "email_address.wav"
-                    audio_processor.record_audio(email_audio, input_device)
-                    
-                    if orb_controller:
-                        orb_controller.set_state("processing")
-                    
-                    email_address = audio_processor.transcribe_with_whisper(email_audio)
-                    os.remove(email_audio)
-                    
-                    # Clean up transcription
-                    email_address = email_address.strip().replace(' ', '').lower()
-                    
-                    # Save contact for future use
-                    gmail_service.add_contact(to_recipient, email_address)
+                            break
+                        else:
+                            # It's a name - try to find it
+                            retry_result = gmail_service.get_email_from_name(email_input, threshold=0.9)
+                            retry_email, retry_name, retry_sim = retry_result
+                            
+                            if retry_email:
+                                if retry_sim < 1.0:
+                                    # Fuzzy match
+                                    print(f"\n{CYAN}Found: {retry_name} (similarity: {retry_sim:.2%}){RESET_COLOR}")
+                                    print(f"{CYAN}Email: {retry_email}{RESET_COLOR}")
+                                    retry_confirm = input(f"Did you mean {retry_name}? (y/n): ").strip().lower()
+                                    
+                                    if retry_confirm in ['y', 'yes']:
+                                        email_address = retry_email
+                                        break
+                                else:
+                                    # Exact match
+                                    email_address = retry_email
+                                    break
                 
                 to_recipient = email_address
             
@@ -326,23 +361,11 @@ def main():
                     orb_controller.set_state("idle")
                 continue
             
-            # Search through emails for the query
-            matching_emails = gmail_service.search_emails_for_content(recent_emails, search_query)
+            # Search through emails using similarity (60% threshold)
+            matching_emails = gmail_service.search_emails_for_content(recent_emails, search_query, similarity_threshold=0.6)
             
-            if matching_emails:
-                # Prepare summary of matching emails
-                summary = f"Found {len(matching_emails)} email{'s' if len(matching_emails) > 1 else ''} about {search_query}. "
-                
-                # Mention top 3 matching emails
-                for i, email in enumerate(matching_emails[:3]):
-                    sender = email['from'].split('<')[0].strip()
-                    subject = email['subject']
-                    summary += f"Email {i+1}: From {sender}, subject: {subject}. "
-                
-                if len(matching_emails) > 3:
-                    summary += f"And {len(matching_emails) - 3} more."
-            else:
-                summary = f"I didn't find any emails about {search_query} in your last 50 messages."
+            # Generate LLM-based summary
+            summary = gmail_service.generate_email_summary(llm_interface, matching_emails, search_query)
             
             print(f"DEBUG: Email search summary: {summary}")
             audio_processor.process_and_play(summary, speaker_sample_path, output_device, orb_controller)
@@ -377,7 +400,6 @@ def main():
                 os.remove(event_audio)
             
             # Parse event details using LLM
-            event_part += " today is " + datetime.now().strftime('%d-%m-%Y')  # Provide current date context
             parsed_event = event_parser.parse_event_creation(event_part)
             title = parsed_event['title']
             description = parsed_event['description']
@@ -385,13 +407,19 @@ def main():
             start_time_str = parsed_event['start_time']
             end_time_str = parsed_event['end_time']
             
+            print(f"DEBUG: Parsed - date:{date_str}, start:{start_time_str}, end:{end_time_str}")
+            
             # Parse date from event (or use today as default)
             if date_str:
                 event_date = time_parser.parse_date_string(date_str)
                 if event_date is None:
+                    print(f"DEBUG: Could not parse date '{date_str}', using today")
                     event_date = datetime.now().date()
+                else:
+                    print(f"DEBUG: Using parsed date: {event_date}")
             else:
                 event_date = datetime.now().date()
+                print(f"DEBUG: No date provided, using today: {event_date}")
             
             # Parse start time
             if start_time_str:
@@ -600,6 +628,11 @@ def main():
                 duration_hours = 24
                 print(f"DEBUG: No duration in search query, defaulting to 24 hours")
             
+            # Default to today if no start date provided
+            if start_date_str is None:
+                start_date_str = datetime.now().strftime('%d-%m-%Y')
+                print(f"DEBUG: No start date in search query, defaulting to today: {start_date_str}")
+            
             # Extract search keywords (remove time-related words)
             search_query = re.sub(r'\b(today|tomorrow|yesterday|next|this|week|day|hour|minute|on|at)\b', '', search_text, flags=re.IGNORECASE)
             search_query = search_query.strip()
@@ -607,10 +640,7 @@ def main():
             if not search_query:
                 search_query = search_text
             
-            if start_date_str:
-                print(f"DEBUG: Searching events for '{search_query}' starting from {start_date_str} for {duration_hours} hours")
-            else:
-                print(f"DEBUG: Searching events for '{search_query}' in next {duration_hours} hours")
+            print(f"DEBUG: Searching events for '{search_query}' starting from {start_date_str} for {duration_hours} hours")
             
             # Search events
             events = calendar_service.search_events(duration_hours, search_query, start_date_str)

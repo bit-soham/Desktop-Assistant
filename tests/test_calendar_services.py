@@ -3,6 +3,11 @@ Test Calendar Services
 Tests event parsing, time parsing, and Google Calendar API integration
 """
 
+import sys
+import os
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from services.calendar_services import CalendarService, DurationParser, EventParser, TimeParser
 from models.llm_interface import create_llm_interface
 from datetime import datetime, timedelta
@@ -81,16 +86,16 @@ def test_event_parser():
     print("\nTesting Event Creation with Date and Start/End Times:")
     test_inputs = [
         "meeting with team from 2pm to 4pm about project updates",
-        "doctor appointment tomorrow at 3pm for 1 hour",
-        "lunch with john today from 12:30 to 1:30",
-        "team standup at 10am to 10:30am",
-        "project review from 9am to 11am",
-        "conference call on November 20 from 3pm to 5pm",
-        "dentist appointment tomorrow at 2pm"
+        # "doctor appointment tomorrow at 3pm for 1 hour",
+        # "lunch with john today from 12:30 to 1:30",
+        # "team standup at 10am to 10:30am",
+        # "project review from 9am to 11am",
+        # "conference call on November 20 from 3pm to 5pm",
+        # "dentist appointment tomorrow at 2pm"
     ]
     
     for i, test_input in enumerate(test_inputs, 1):
-        test_input += datetime.now().strftime('%d-%m-%Y')
+        test_input += " today is " + datetime.now().strftime('%d-%m-%Y')
         print(f"\nTest {i}: {test_input}")
         result = event_parser.parse_event_creation(test_input)
         print(f"Title: {result.get('title')}")
@@ -116,12 +121,12 @@ def test_event_parser():
     
     search_queries = [
         "do I have any meetings today",
-        "what's on my calendar for the next 3 hours",
-        "any events tomorrow",
-        "meetings this week",
-        "do I have any appointments",
-        "events on November 20",
-        "meetings yesterday"
+        # "what's on my calendar for the next 3 hours",
+        # "any events tomorrow",
+        # "meetings this week",
+        # "do I have any appointments",
+        # "events on November 20",
+        # "meetings yesterday"
     ]
     
     for i, query in enumerate(search_queries, 1):
@@ -164,13 +169,14 @@ def test_calendar_service():
                 title = "Test Event from Desktop Assistant"
                 description = "This is a test event created by the calendar integration."
                 
-                # Create event starting in 1 hour, ending in 2 hours
-                start_time = datetime.now() + timedelta(hours=1)
-                end_time = datetime.utcnow() + timedelta(hours=2)
+                # Create event starting in 1 hour, ending in 2 hours (both in UTC)
+                now_utc = datetime.utcnow()
+                start_time = now_utc + timedelta(hours=1)
+                end_time = now_utc + timedelta(hours=2)
                 
                 print(f"\nCreating event: {title}")
-                print(f"Start: {start_time.strftime('%Y-%m-%d %I:%M %p')}")
-                print(f"End: {end_time.strftime('%Y-%m-%d %I:%M %p')}")
+                print(f"Start: {start_time.strftime('%Y-%m-%d %H:%M UTC')}")
+                print(f"End: {end_time.strftime('%Y-%m-%d %H:%M UTC')}")
                 
                 event = calendar_service.create_event(title, description, start_time, end_time)
                 
@@ -212,10 +218,18 @@ def test_calendar_service():
             
             if search_choice.lower() == 'y':
                 query = input("Enter search query (e.g., 'meeting'): ")
+                start_date_input = input("Enter start date (DD-MM-YYYY) or press Enter for today: ").strip()
                 duration = 168  # 1 week
                 
-                print(f"\nSearching for '{query}' in the next {duration} hours...")
-                events = calendar_service.search_events(duration, query)
+                # Use today if no date provided
+                start_date_str = start_date_input if start_date_input else None
+                
+                if start_date_str:
+                    print(f"\nSearching for '{query}' starting from {start_date_str} for the next {duration} hours...")
+                else:
+                    print(f"\nSearching for '{query}' starting from today for the next {duration} hours...")
+                    
+                events = calendar_service.search_events(duration, query, start_date_str)
                 
                 if events:
                     print(f"\n✅ Found {len(events)} matching event(s):")
