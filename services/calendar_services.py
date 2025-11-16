@@ -486,13 +486,16 @@ class EventParser:
         
         system_prompt = f"""You are an event parser. Today is {today_str}.
 Extract the event title, description/content, date, start time, and end time from the user's input.
-Dates should be in DD-MM-YYYY format. If user says "today" use {today_str}, "tomorrow" use next day, etc.
-Times MUST be in 24-hour format HH:MM (e.g., "14:30", "09:00", "18:45").
-Convert any AM/PM times to 24-hour format: 3pm = "15:00", 10am = "10:00", etc.
-If date, start time, or end time is not mentioned, set them to null.
 
-Return ONLY a valid JSON object with this exact format:
-{{"title": "event title", "description": "event description", "date": "DD-MM-YYYY", "start_time": "HH:MM", "end_time": "HH:MM"}}
+
+Output requirements (CRITICAL):
+    - Output **ONLY** a single valid JSON object (no surrounding text, no explanation, no backticks, no code fences).
+    - This should be the JSON format:{{"title": "event title", "description": "event description", "date": "DD-MM-YYYY", "start_time": "HH:MM", "end_time": "HH:MM"}}
+    - Start and end times MUST be in 24-hour format HH:MM (e.g., "14:30", "09:00", "18:45").
+    Convert any AM/PM times to 24-hour format: 3pm = "15:00", 10am = "10:00", etc.        
+    - If date, start time, or end time is not mentioned, set them to null.
+    - Dates should be in DD-MM-YYYY format. If user says "today" use {today_str}, "tomorrow" use next day, etc.
+    - Use ISO formatting for no special tokens.
 
 Examples:
 Input: "meeting with team from 2pm to 4pm about project updates"
